@@ -14,7 +14,7 @@ jest.mock("../../components/WalletStatusLazy", () => ({
   },
 }));
 
-describe.skip("InvoicesPage", () => {
+describe("InvoicesPage", () => {
   it("renders the heading and subtext from copy.invoices", () => {
     render(<InvoicesPage />);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/invoice/i);

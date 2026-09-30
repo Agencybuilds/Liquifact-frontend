@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import React, { useCallback, useState } from "react";
 import { copy } from "../copy/en";
 import NavMenu from "../../components/NavMenu";
 import UploadZone from "../../components/UploadZone";
@@ -9,9 +9,43 @@ import InvoiceList from "../../components/InvoiceList";
 export default function InvoicesPage() {
   const [optimisticInvoices, setOptimisticInvoices] = useState([]);
 
-  const handleUploadSuccess = (invoice) => {
-    setOptimisticInvoices((current) => [invoice, ...current]);
-  };
+  // Compatibility contract: `onUploadSuccess` may be invoked with a single
+  // invoice object (legacy callers) or an array of invoices (batched uploads).
+  // We normalize both shapes, ignore malformed/empty payloads, and de-duplicate
+  // by `id` so retries or concurrent uploads cannot create duplicate rows.
+  const handleUploadSuccess = useCallback((payload) => {
+    const incoming = Array.isArray(payload) ? payload : [payload];
+    const valid = incoming.filter(
+      (invoice) =>
+        invoice &&
+        typeof invoice === "object" &&
+        invoice.id !== undefined &&
+        invoice.id !== null
+    );
+
+    if (valid.length === 0) {
+      return;
+    }
+
+    setOptimisticInvoices((current) => {
+      const seen = new Set(current.map((invoice) => invoice.id));
+      const additions = [];
+
+      for (const invoice of valid) {
+        if (seen.has(invoice.id)) {
+          continue;
+        }
+        seen.add(invoice.id);
+        additions.push(invoice);
+      }
+
+      if (additions.length === 0) {
+        return current;
+      }
+
+      return [...additions, ...current];
+    });
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50">
