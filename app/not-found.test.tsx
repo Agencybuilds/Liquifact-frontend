@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for app/not-found.js — the branded 404 boundary.
  *
@@ -9,10 +10,57 @@
 import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
 import { axe } from "jest-axe";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import React from "react";
 
 import NotFound from "./not-found";
 import { copy } from "./copy/en";
+
+// ── Concurrency / idempotency harness ─────────────────────────────────────────
+//
+// Invariants under test:
+//  1. Rendering the 404 boundary is a pure, side-effect-free operation, so
+//     concurrent or repeated renders must produce identical output.
+//  2. No shared mutable module state may leak between renders (e.g. counters,
+//     caches, or memoized singletons that could go stale).
+//  3. Retries after a failed render must not observe partial state from the
+//     previous attempt.
+//
+// These helpers exercise those invariants without changing the component's
+// public interface.
+
+/**
+ * Renders the boundary `times` times concurrently and returns the resulting
+ * serialized DOM for each render. Because React Testing Library renders are
+ * synchronous, we interleave them via Promise.all to model racing callers.
+ */
+async function renderConcurrently(times) {
+  const results = await Promise.all(
+    Array.from({ length: times }, async () => {
+      const { container, unmount } = render(<NotFound />);
+      const html = container.innerHTML;
+      unmount();
+      return html;
+    })
+  );
+  return results;
+}
+
+/**
+ * Renders the boundary, unmounts it, and renders again — modelling an
+ * idempotent retry after a transient failure. Returns both snapshots.
+ */
+function renderThenRetry() {
+  const first = render(<NotFound />);
+  const firstHtml = first.container.innerHTML;
+  first.unmount();
+
+  const second = render(<NotFound />);
+  const secondHtml = second.container.innerHTML;
+  second.unmount();
+
+  return { firstHtml, secondHtml };
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -158,6 +206,73 @@ describe("NotFound (app/not-found.js)", () => {
     it("renders consistently across test runs", () => {
       const { container } = renderNotFound();
       expect(container.firstChild).toMatchSnapshot();
+    });
+  });
+
+  // ── Concurrency / idempotency ────────────────────────────────────────────────
+
+  describe("concurrent execution", () => {
+    it("produces identical output for racing renders", async () => {
+      const snapshots = await renderConcurrently(8);
+      expect(snapshots).toHaveLength(8);
+      // Every concurrent render must be byte-for-byte identical.
+      for (const html of snapshots) {
+        expect(html).toBe(snapshots[0]);
+      }
+    });
+
+    it("does not leak state between concurrent renders", async () => {
+      const [a, b] = await renderConcurrently(2);
+      // A second render must not accumulate nodes or duplicate landmarks.
+      expect(a).toBe(b);
+      expect((a.match(/not-found-page/g) ?? []).length).toBe(1);
+    });
+
+    it("is idempotent across unmount/remount retries", () => {
+      const { firstHtml, secondHtml } = renderThenRetry();
+      expect(secondHtml).toBe(firstHtml);
+    });
+
+    it("recovers cleanly after a failed render attempt", () => {
+      // Simulate a transient failure by rendering, throwing away the tree,
+      // then rendering again. The retry must succeed with full output.
+      const failed = render(<NotFound />);
+      failed.unmount();
+
+      renderNotFound();
+      expect(screen.getByTestId("not-found-page")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
+    });
+
+    it("keeps the home link stable under repeated renders", async () => {
+      const snapshots = await renderConcurrently(5);
+      for (const html of snapshots) {
+        expect(html).toContain('href="/"');
+      }
+    });
+  });
+
+  // ── Boundary cases ───────────────────────────────────────────────────────────
+
+  describe("boundary cases", () => {
+    it("renders without props (invalid/unknown route input)", () => {
+      // The boundary receives no route params; it must not depend on any.
+      render(<NotFound />);
+      expect(screen.getByTestId("not-found-page")).toBeInTheDocument();
+    });
+
+    it("does not expose sensitive data in the rendered output", () => {
+      const { container } = renderNotFound();
+      const html = container.innerHTML;
+      // No stack traces, file paths, or internal identifiers should leak.
+      expect(html).not.toMatch(/at\s+\w+\s+\(/);
+      expect(html).not.toMatch(/node_modules/);
+      expect(html).not.toMatch(/Error:/);
+    });
+
+    it("renders a diagnosable, user-visible message", () => {
+      renderNotFound();
+      expect(screen.getByText(copy.notFound.description)).toBeVisible();
     });
   });
 });

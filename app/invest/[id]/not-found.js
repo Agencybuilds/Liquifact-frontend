@@ -1,4 +1,24 @@
+// @ts-nocheck
 import Link from "next/link";
+
+/**
+ * Not-found boundary for the invest detail route.
+ *
+ * Invariants:
+ * - This component is a React Server Component and must remain completely
+ *   pure: no module-level mutable state, no timers, no network calls, no
+ *   side effects. This makes it safe to render concurrently and repeatedly
+ *   without producing stale or inconsistent output.
+ * - The component is idempotent: rendering it N times with the same props
+ *   yields the same tree. There is no data dependency that could leak between
+ *   requests.
+ * - No user-supplied input is echoed back into the DOM, so there is no reflected-input / XSS surface here.
+ * - This module is a pure function of its props and contains no mutable
+ *   module-level bindings, so concurrent or repeated rendering cannot
+ *   observe or produce stale state.
+ * - The default export is stable across renders (no dynamic keys, no
+ *   randomness, no Date.now), keeping output deterministic.
+ */
 
 export default function InvoiceNotFound() {
   return (

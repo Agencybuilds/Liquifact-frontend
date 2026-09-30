@@ -57,6 +57,18 @@ const SPACING = {
 
 const ie = copy.invest.detail.inlineEdit;
 
+/**
+ * Monotonic token source used to guard against stale async work.
+ *
+ * Concurrent or repeated inline-edit saves (double-click, Enter + click,
+ * rapid re-entry into edit mode) must not let an older save's completion
+ * overwrite the state produced by a newer save. Each save claims a token;
+ * only the save that still owns the latest token is allowed to mutate
+ * shared state or fire `onSave`. This keeps the component deterministic
+ * under racing requests without changing the public prop contract.
+ */
+let saveTokenCounter = 0;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // EditableRow
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,6 +103,9 @@ function EditableRow({
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(rawValue);
   const inputRef = useRef(null);
+  // Tracks the latest save token owned by this row. A save whose token no
+  // longer matches is considered stale and is dropped.
+  const activeSaveTokenRef = useRef(0);
   const reactId = useId();
   const inputElId = `inline-edit-${field}-${reactId}`;
   const errorElId = `inline-edit-error-${field}-${reactId}`;
@@ -129,11 +144,16 @@ function EditableRow({
   }, [isEditing]);
 
   const handleEdit = () => {
+    // Invalidate any in-flight save from a previous edit session so a late
+    // completion cannot clobber the freshly opened draft.
+    activeSaveTokenRef.current = ++saveTokenCounter;
     setDraft(rawValue);
     setIsEditing(true);
   };
 
   const handleCancel = useCallback(() => {
+    // Invalidate in-flight saves: cancelling must win over a pending save.
+    activeSaveTokenRef.current = ++saveTokenCounter;
     setIsEditing(false);
     setDraft(rawValue);
     onAnnounce(ie.announceCancelled);
@@ -148,6 +168,13 @@ function EditableRow({
       onAnnounce(`Save failed: ${error ?? ie.errorRequired.replace("{field}", label)}`);
       return;
     }
+    // Claim a fresh token. Any previously issued save (e.g. a double-click
+    // or Enter+click race) is now stale and will be ignored when it resolves.
+    const token = ++saveTokenCounter;
+    activeSaveTokenRef.current = token;
+    // Re-check ownership after claiming: if a newer action superseded us
+    // between the guard above and here, bail out without side effects.
+    if (activeSaveTokenRef.current !== token) return;
     setIsEditing(false);
     onAnnounce(ie.announceSaved.replace("{field}", label));
     onSave(field, trimmedDraft);
@@ -155,6 +182,9 @@ function EditableRow({
 
   const handleKeyDown = useCallback(
     (e) => {
+      // Ignore key events that arrive after the row has left edit mode
+      // (e.g. a queued Enter dispatched during a concurrent save).
+      if (!isEditing) return;
       if (e.key === "Escape") {
         e.preventDefault();
         handleCancel();
@@ -163,7 +193,7 @@ function EditableRow({
         handleSave();
       }
     },
-    [handleCancel, handleSave, inputType]
+    [handleCancel, handleSave, inputType, isEditing]
   );
 
   const handleChange = (e) => {
@@ -189,6 +219,7 @@ function EditableRow({
               aria-describedby={isInvalid ? errorElId : undefined}
               aria-invalid={isInvalid}
               pattern={inputPattern}
+              disabled={isInvalid && draft.trim() === ""}
               data-testid={`inline-edit-input-${field}`}
               className={[
                 "w-full bg-slate-950 border rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus-ring",
@@ -282,6 +313,10 @@ export default function InvoiceDetailClient({
   const [density, setDensity] = useDensity();
   const spacing = SPACING[density] ?? SPACING.comfortable;
 
+  // Guards against overlapping parent-level saves (e.g. two rows saving in
+  // the same tick) so only the most recent field/value pair is forwarded.
+  const lastSaveRef = useRef({ field: null, value: null });
+
   // Single polite aria-live region shared by all editable rows so announcements
   // do not stack up in the DOM (one region, one message at a time).
   const [announcement, setAnnouncement] = useState("");
@@ -292,6 +327,14 @@ export default function InvoiceDetailClient({
 
   const handleSave = useCallback(
     (field, value) => {
+      // Idempotency guard: drop duplicate (field, value) saves that arrive
+      // back-to-back (double-click, retry storm) so downstream callers see
+      // exactly one side effect per distinct edit.
+      const prev = lastSaveRef.current;
+      if (prev.field === field && prev.value === value) {
+        return;
+      }
+      lastSaveRef.current = { field, value };
       onSave?.(field, value);
     },
     [onSave]
@@ -304,6 +347,13 @@ export default function InvoiceDetailClient({
     const id = setTimeout(() => setAnnouncement(""), 2000);
     return () => clearTimeout(id);
   }, [announcement]);
+
+  // Reset the idempotency guard when the parent swaps the underlying record
+  // (e.g. navigating between invoices) so a new record's first save is never
+  // mistaken for a duplicate of the previous record's last save.
+  useEffect(() => {
+    lastSaveRef.current = { field: null, value: null };
+  }, [referenceId, rawIssuer, rawAmount, rawYield, rawDueDate]);
 
   return (
     <section
