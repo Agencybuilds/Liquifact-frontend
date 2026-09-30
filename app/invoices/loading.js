@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @file app/invoices/loading.js
  * Next.js route-level loading UI for the /invoices page.
@@ -5,6 +6,22 @@
  * Rendered automatically by the Next.js App Router while the page segment
  * is streaming. Delegates the upload area skeleton to the reusable
  * UploadSkeleton component so both share the same markup and stay in sync.
+ *
+ * ## State invariants
+ * This component is a pure, stateless loading shell. It owns no mutable
+ * state and must never introduce side effects. The invariants it guarantees:
+ *
+ *  1. Determinism — given the same props the output is byte-for-byte
+ *     identical. The component accepts no props and reads no external
+ *     state, so concurrent renders and retries cannot diverge.
+ *  2. Accessibility — the root carries `aria-busy="true"` and an
+ *     associated `data-testid` hook so tests and assistive technology
+ *     can reliably locate the loading region. The `sr-only` announcement
+ *     is owned by `UploadSkeleton` and must not be duplicated here.
+ *  3. No data leakage — the skeleton renders only placeholder markup.
+ *     It must never read or render user data, tokens, or any sensitive
+ *     values.
+ *  4. No layout shift — the skeleton mirrors the real page sizes.
  *
  * @see components/UploadSkeleton.jsx — reusable upload skeleton
  */

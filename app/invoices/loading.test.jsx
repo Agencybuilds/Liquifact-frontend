@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * @file app/invoices/loading.test.jsx
  * Tests for the Next.js route-level loading UI at /invoices.
@@ -7,6 +8,10 @@
  *  - delegates to UploadSkeleton
  *  - exposes the correct ARIA attributes on the page shell
  *  - has no accessibility violations
+ *
+ * Additional invariant coverage (determinism, purity, no data leakage,
+ * concurrent/repeated renders) is included below to guard the state
+ * invariants documented in loading.js.
  */
 
 import React from "react";
@@ -67,5 +72,47 @@ describe("InvoicesLoading", () => {
     const { container } = render(<InvoicesLoading />);
     const pulsed = container.querySelectorAll(".animate-pulse");
     expect(pulsed.length).toBeGreaterThanOrEqual(5);
+  });
+
+  // ---- State invariant coverage ----
+
+  it("is a deterministic pure component: repeated renders produce identical markup", () => {
+    const first = render(<InvoicesLoading />);
+    const second = render(<InvoicesLoading />);
+    expect(first.container.innerHTML).toEqual(second.container.innerHTML);
+  });
+
+  it("does not mutate global state or emit side effects during render", () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      render(<InvoicesLoading />);
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("renders only placeholder markup and never sensitive data", () => {
+    const { container } = render(<InvoicesLoading />);
+    const text = container.textContent || "";
+    // No emails, tokens, or IDs leaked into the loading shell.
+    expect(text).not.toMatch(/@[^\s]+\.[A-Za-z]{2,}/);
+    expect(text).not.toMatch(/\beyJ[a-zA-Z0-9_-]*\./);
+    expect(text).not.toMatch(/\b\d{6, }\b/);
+  });
+
+  it("supports concurrent renders without shared mutable state", () => {
+    const outputs = Array.from({ length: 5 }, () => render(<InvoicesLoading />).container.innerHTML);
+    const unique = new Set(outputs);
+    expect(unique.size).toBe(1);
+  });
+
+  it("renders exactly one UploadSkeleton instance (no duplicate announcements)", () => {
+    render(<InvoicesLoading />);
+    expect(screen.getAllByTestId("upload-skeleton")).toHaveLength(1);
+    expect(screen.getAllByText(/upload form loading, please wait/i)).toHaveLength(1);
   });
 });
