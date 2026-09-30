@@ -16,9 +16,10 @@ function renderLazy() {
 
 // ── Mock next/dynamic so we can control lazy-load timing in tests ──
 jest.mock("next/dynamic", () => {
-  const ReactForMock = require("react");
-
   return function dynamicMock(importFunc, options) {
+    const ReactForMock = require("react");
+    const { act } = require("@testing-library/react");
+
     function DynamicWrapper(props) {
       const [Component, setComponent] = ReactForMock.useState(null);
       const [isLoading, setIsLoading] = ReactForMock.useState(true);
@@ -27,8 +28,10 @@ jest.mock("next/dynamic", () => {
         let cancelled = false;
         importFunc().then((mod) => {
           if (!cancelled) {
-            setComponent(() => mod.default || mod);
-            setIsLoading(false);
+            act(() => {
+              setComponent(() => mod.default || mod);
+              setIsLoading(false);
+            });
           }
         });
         return () => {
@@ -50,11 +53,10 @@ jest.mock("next/dynamic", () => {
 
     DynamicWrapper.displayName = "DynamicWrapper";
     const SuspenseWrapper = (props) => {
-      const inlineReact = require("react");
-      return inlineReact.createElement(
-        inlineReact.Suspense,
-        { fallback: options?.loading ? inlineReact.createElement(options.loading, props) : null },
-        inlineReact.createElement(DynamicWrapper, props)
+      return ReactForMock.createElement(
+        ReactForMock.Suspense,
+        { fallback: options?.loading ? ReactForMock.createElement(options.loading, props) : null },
+        ReactForMock.createElement(DynamicWrapper, props)
       );
     };
     SuspenseWrapper.displayName = "SuspenseWrapper";
@@ -141,13 +143,13 @@ describe("WalletStatusLazy", () => {
 
     await waitFor(
       () => {
-        const status = screen.getByRole("status");
+        const status = screen.getByTestId("wallet-live-region");
         expect(status).toBeInTheDocument();
       },
       { timeout: 3000 }
     );
 
-    const status = screen.getByRole("status");
+    const status = screen.getByTestId("wallet-live-region");
     expect(status).toHaveAttribute("aria-live", "polite");
   });
 

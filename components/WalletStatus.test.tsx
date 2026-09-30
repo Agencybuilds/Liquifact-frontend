@@ -26,15 +26,13 @@ function renderWithProviders(ui: React.ReactElement) {
  * Render WalletStatus with a fixed wallet context value, bypassing the real
  * WalletProvider connect/disconnect flow so we can assert per-state rendering.
  */
-function renderWithState(
-  state: string,
-  overrides: Record<string, unknown> = {}
-) {
+function renderWithState(state: string, overrides: Record<string, unknown> = {}) {
   const contextValue = {
     state,
-    walletData: state === WALLET_STATES.CONNECTED
-      ? { address: "GABC...XYZ123", network: "testnet", balance: "1,234.56 XLM" }
-      : null,
+    walletData:
+      state === WALLET_STATES.CONNECTED
+        ? { address: "GABC...XYZ123", network: "testnet", balance: "1,234.56 XLM" }
+        : null,
     error: null,
     connect: jest.fn(),
     disconnect: jest.fn(),
@@ -84,15 +82,13 @@ describe("WalletStatus live region", () => {
     const region = screen.getByTestId("wallet-live-region");
     expect(region).toHaveAttribute("aria-live", "polite");
     expect(region).toHaveAttribute("role", "status");
-    // No announcement yet — initial render should be silent
-    expect(region).toHaveTextContent("");
+    expect(region).toHaveTextContent("No wallet connected.");
   });
 
   it("announces wallet state on mount (disconnected)", () => {
     renderWithProviders(<WalletStatus />);
     const region = screen.getByTestId("wallet-live-region");
-    // Initial render should have no announcement since state hasn't changed
-    expect(region).toHaveTextContent("");
+    expect(region).toHaveTextContent("No wallet connected.");
   });
 });
 
@@ -115,7 +111,11 @@ describe("WalletStatus Button variant + loading — per WALLET_STATE", () => {
    * WalletStatus renders exactly one <button>.
    */
   function getWalletButton() {
-    return screen.getByRole("button");
+    const buttons = screen.getAllByRole("button");
+    const actionButton = buttons.find(
+      (btn) => btn.getAttribute("aria-label") !== "Copy wallet address"
+    );
+    return actionButton || buttons[0];
   }
 
   describe("DISCONNECTED", () => {
@@ -244,8 +244,8 @@ describe("WalletStatus Button variant + loading — per WALLET_STATE", () => {
   describe("NO_WALLET", () => {
     beforeEach(() => renderWithState(WALLET_STATES.NO_WALLET));
 
-    it('renders the "Install Wallet" button', () => {
-      expect(getWalletButton()).toHaveAccessibleName(/install wallet/i);
+    it('renders the "Install Stellar Wallet" button', () => {
+      expect(getWalletButton()).toHaveAccessibleName(/install (stellar )?wallet/i);
     });
 
     it("uses the external variant (violet background class)", () => {
@@ -260,5 +260,50 @@ describe("WalletStatus Button variant + loading — per WALLET_STATE", () => {
     it("is enabled (user can click to open install URL)", () => {
       expect(getWalletButton()).not.toBeDisabled();
     });
+  });
+});
+
+describe("WalletStatus — Balance display and tooltip formatting", () => {
+  it("renders_compact_balance_for_typical_value", () => {
+    renderWithState(WALLET_STATES.CONNECTED, {
+      walletData: { address: "GABC...XYZ123", network: "testnet", balance: "1,234.56 XLM" },
+    });
+    expect(screen.getByText("1.23K XLM")).toBeInTheDocument();
+  });
+
+  it("tooltip_title_contains_full_precision_value", () => {
+    renderWithState(WALLET_STATES.CONNECTED, {
+      walletData: { address: "GABC...XYZ123", network: "testnet", balance: "1,234.56 XLM" },
+    });
+    const balanceElem = screen.getByText("1.23K XLM");
+    expect(balanceElem).toHaveAttribute("title", "1,234.56 XLM");
+    expect(balanceElem).toHaveAttribute("aria-label", "Wallet balance: 1,234.56 XLM");
+  });
+
+  it("renders_placeholder_when_disconnected", () => {
+    renderWithState(WALLET_STATES.DISCONNECTED);
+    expect(screen.queryByText("1.23K XLM")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Connect your Stellar wallet to access the platform/i)
+    ).toBeInTheDocument();
+  });
+
+  it("renders_placeholder_or_correctly_formats_zero_balance", () => {
+    renderWithState(WALLET_STATES.CONNECTED, {
+      walletData: { address: "GABC...XYZ123", network: "testnet", balance: "0 XLM" },
+    });
+    const zeroBalanceElem = screen.getByText("0 XLM");
+    expect(zeroBalanceElem).toBeInTheDocument();
+    expect(zeroBalanceElem).toHaveAttribute("title", "0 XLM");
+    expect(zeroBalanceElem).not.toHaveTextContent("—");
+  });
+
+  it("compact_formatting_handles_very_large_balance", () => {
+    renderWithState(WALLET_STATES.CONNECTED, {
+      walletData: { address: "GABC...XYZ123", network: "testnet", balance: "1,500,000.00 XLM" },
+    });
+    const largeBalanceElem = screen.getByText("1.5M XLM");
+    expect(largeBalanceElem).toBeInTheDocument();
+    expect(largeBalanceElem).toHaveAttribute("title", "1,500,000.00 XLM");
   });
 });

@@ -23,9 +23,7 @@ import ErrorBanner from "./ErrorBanner";
 
 describe("variant label", () => {
   it('shows "Server error" for variant="server"', () => {
-    render(
-      <ErrorBanner variant="server" title="Oops" description="Something went wrong." />
-    );
+    render(<ErrorBanner variant="server" title="Oops" description="Something went wrong." />);
     expect(screen.getByText("Server error")).toBeInTheDocument();
   });
 
@@ -35,9 +33,7 @@ describe("variant label", () => {
   });
 
   it('shows "Validation error" for variant="validation"', () => {
-    render(
-      <ErrorBanner variant="validation" title="Bad input" description="Fix the form." />
-    );
+    render(<ErrorBanner variant="validation" title="Bad input" description="Fix the form." />);
     expect(screen.getByText("Validation error")).toBeInTheDocument();
   });
 
@@ -103,9 +99,7 @@ describe("actionLabel", () => {
   });
 
   it("hides the action button when actionLabel is an empty string", () => {
-    render(
-      <ErrorBanner title="Oops" description="Something went wrong." actionLabel="" />
-    );
+    render(<ErrorBanner title="Oops" description="Something went wrong." actionLabel="" />);
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });
@@ -144,9 +138,7 @@ describe("onAction callback", () => {
       />
     );
 
-    await expect(
-      user.click(screen.getByRole("button", { name: "Retry" }))
-    ).resolves.not.toThrow();
+    await expect(user.click(screen.getByRole("button", { name: "Retry" }))).resolves.not.toThrow();
   });
 });
 
@@ -167,11 +159,7 @@ describe("content rendering", () => {
 
   it("renders details when provided", () => {
     render(
-      <ErrorBanner
-        title="Load failed"
-        description="Could not reach API."
-        details="Status 500"
-      />
+      <ErrorBanner title="Load failed" description="Could not reach API." details="Status 500" />
     );
     expect(screen.getByText("Status 500")).toBeInTheDocument();
   });
@@ -182,13 +170,7 @@ describe("content rendering", () => {
   });
 
   it("renders the previewLabel badge", () => {
-    render(
-      <ErrorBanner
-        title="Oops"
-        description="Fail."
-        previewLabel="Invoice detail"
-      />
-    );
+    render(<ErrorBanner title="Oops" description="Fail." previewLabel="Invoice detail" />);
     expect(screen.getByText("Invoice detail")).toBeInTheDocument();
   });
 
