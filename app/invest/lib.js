@@ -66,13 +66,133 @@ export const MOCK_INVOICES = [
 // DEV-only delay (ms) to make the skeleton visible during local development.
 const DEV_DELAY = process.env.NODE_ENV === "development" ? 1500 : 0;
 
-export function loadMockInvoices() {
-  // Test hook: Playwright / Jest tests may override the fixture by setting
-  // window.__TEST_MOCK_INVOICES__ before the component mounts.  The override
-  // is ignored in non-browser (SSR) environments and in production builds.
-  if (typeof window !== "undefined" && window.__TEST_MOCK_INVOICES__) {
-    return Promise.resolve(window.__TEST_MOCK_INVOICES__);
+/**
+ * Error class for invoice loading failures. Carries a stable code so callers
+ * can react deterministically without parsing message strings.
+ */
+export class InvoiceLoadError extends Error {
+  constructor(message, code = "load_failed", cause = undefined) {
+    super(message);
+    this.name = "InvoiceLoadError";
+    this.code = code;
+    if (cause !== undefined) this.cause = cause;
   }
+}
+
+/**
+ * Validate an invoice record against the documented contract.
+ * Returns true when the record is well-formed enough to render.
+ * @param {unknown} invoice
+ * @returns {boolean}
+ */
+export function isValidInvoice(invoice) {
+  if (!invoice || typeof invoice !== "object") return false;
+  if (typeof invoice.id !== "string" || invoice.id.length === 0) return false;
+  if (typeof invoice.issuer !== "string") return false;
+  if (typeof invoice.amount !== "string") return false;
+  if (typeof invoice.currency !== "string") return false;
+  if (typeof invoice.dueDate !== "string") return false;
+  if (typeof invoice.status !== "string") return false;
+  return true;
+}
+
+/**
+ * Normalize a raw invoice list into a deterministic, de-duplicated array.
+ *
+ * Invariants:
+ *  - Only well-formed records are returned (malformed entries are dropped).
+ *  - Duplicate ids are collapsed; the first occurrence wins so results
+ *    are independent of iteration order of the duplicates.
+ *  - Order of the input is preserved for the first occurrence of each id.
+ *  @param {unknown} raw
+ * @returns {object[]}
+ */
+export function normalizeInvoices(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const item of raw) {
+    if (!isValidInvoice(item)) continue;
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    out.push(item);
+  }
+  return out;
+}
+
+/**
+ * Load invoices with deterministic failure recovery.
+ *
+ * Behavior:
+ *  - Resolves with a normalized invoice array on success.
+ *  - Retries transient failures with exponential backoff (base 2), bounded
+ *    by `maxRetries`. Retries are deterministic and never mutate input.
+ *  - On exhaustion, rejects with an InvoiceLoadError carrying a stable code
+ *    and the number of attempts so the UI knows whether a retry is worth it.
+ *  - Test hook: Playwright / Jest tests may override the fixture by setting
+ *    window.__TEST_MOCK_INVOICES__ before the component mounts. The override
+ *    is ignored in non-browser (SSR) environments and in production builds.
+ *
+ * @param {{ maxRetries?: number, baseDelayMs?: number, fetcher?: () => Promise<unknown> }} [options]
+ * @returns {Promise<object[]>}
+ */
+export async function loadMockInvoices(options = {}) {
+  const {
+    maxRetries = 2,
+    baseDelayMs = DEV_DELAY,
+    fetcher = defaultFetcher,
+  } = options;
+
+  // Test hook: only honored in browser environments and not in production.
+  if (
+    typeof window !== "undefined" &&
+    process.env.NODE_ENV !== "production" &&
+    window.__TEST_MOCK_INVOICES__
+  ) {
+    return normalizeInvoices(window.__TEST_MOCK_INVOICES__);
+  }
+
+  let attempts = 0;
+  let lastError;
+  for (attempts = 1; attempts <= maxRetries + 1; attempts++) {
+    try {
+      const raw = await fetcher();
+      const normalized = normalizeInvoices(raw);
+      if (normalized.length === 0 && Array.isArray(raw) && raw.length > 0) {
+        // All records were invalid: treat as a failure so the UI is visible
+        // and the caller can retry, rather than silently rendering empty.
+        throw new InvoiceLoadError(
+          "All invoice records failed validation",
+          "invalid_data",
+        );
+      }
+      return normalized;
+    } catch (error) {
+      lastError = error;
+      if (attempts <= maxRetries) {
+        const delay = baseDelayMs * 2 ** (attempts - 1);
+        if (delay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+  }
+
+  const code =
+    lastError instanceof InvoiceLoadError ? lastError.code : "load_failed";
+  const message =
+    lastError && lastError.message
+      ? lastError.message
+      : "Unable to load invoices";
+  throw new InvoiceLoadError(message, code, lastError);
+}
+
+/**
+ * Default fetcher used by loadMockInvoices. Exposed for testing and for
+ * future replacement with the real API client.
+ * @returns {Promise<unknown>}
+ */
+export function defaultFetcher() {
   return new Promise((resolve) => {
     setTimeout(() => resolve(MOCK_INVOICES), DEV_DELAY);
   });

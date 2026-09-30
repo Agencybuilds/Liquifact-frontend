@@ -320,6 +320,7 @@ export function InvestMarketplace({
   const [cursorError, setCursorError] = useState("");
   const [pageLoading, setPageLoading] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   // Filter state
   const [searchQuery, setSearchQuery] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -330,6 +331,14 @@ export function InvestMarketplace({
     buildSearchParams(initialUrlState.filters, initialUrlState.searchQuery).toString()
   );
   const urlUpdateTimerRef = useRef(null);
+
+  /**
+   * Monotonic token identifying the latest load attempt. Any async result
+   * whose token does not match the current value is stale and must be
+   * discarded. This makes recovery deterministic under retries, concurrent
+   * loads, and unmount: only the newest attempt may commit state.
+   */
+  const loadTokenRef = useRef(0);
 
   /**
    * When the URL query changes (back/forward, shared link), parse and apply
@@ -371,6 +380,7 @@ export function InvestMarketplace({
     setCursorError("");
     setPageLoading(false);
     setVisibleCount(PAGE_SIZE);
+    setLoadAttempt((n) => n + 1);
     setRetryKey((k) => k + 1);
   }, []);
 
@@ -411,6 +421,7 @@ export function InvestMarketplace({
     setHasMore(false);
     setPageLoading(false);
     setVisibleCount(PAGE_SIZE);
+    setLoadAttempt((n) => n + 1);
     setRetryKey((k) => k + 1);
   }, [setInvoices, setLoadError, setRetryKey]);
 
@@ -539,6 +550,7 @@ export function InvestMarketplace({
   useEffect(() => {
     let isActive = true;
     const controller = new AbortController();
+    const token = ++loadTokenRef.current;
 
     const announceLoadCompletion = async () => {
       try {
@@ -555,7 +567,7 @@ export function InvestMarketplace({
           sortDir: filters.sortDir || "desc",
         });
 
-        if (!isActive) return;
+        if (!isActive || token !== loadTokenRef.current) return;
 
         const normalized = normalizeInvoicePageResult(response);
         if (normalized.invalidCursor) {
@@ -570,12 +582,12 @@ export function InvestMarketplace({
         setNextCursor(normalized.nextCursor ?? null);
         setHasMore(Boolean(normalized.hasMore) || normalized.nextCursor !== null);
       } catch {
-        if (!isActive) return;
+        if (!isActive || token !== loadTokenRef.current) return;
 
         setInvoices(null);
         setLoadError(copy.invest.errorDescription);
       } finally {
-        if (isActive) {
+        if (isActive && token === loadTokenRef.current) {
           setPageLoading(false);
           setLoadGeneration((generation) => generation + 1);
         }
@@ -589,7 +601,7 @@ export function InvestMarketplace({
       controller.abort();
     };
     // retryKey triggers a fresh load on retry without changing loadInvoices.
-  }, [loadInvoices, retryKey, debouncedSearch, filters]);
+  }, [loadInvoices, retryKey, loadAttempt, debouncedSearch, filters]);
 
   // Derive the polite live-region announcement directly from reactive state.
   // Using useMemo (rather than a useEffect + setState) avoids a cascading
@@ -638,6 +650,7 @@ export function InvestMarketplace({
     if (pageLoadInFlightRef.current || pageLoading || !hasMore || !nextCursor || cursorError) return;
 
     pageLoadInFlightRef.current = true;
+    const token = loadTokenRef.current;
     const currentInvoices = Array.isArray(invoices) ? invoices : [];
     setPageLoading(true);
     setCursorError("");
@@ -651,6 +664,10 @@ export function InvestMarketplace({
         sort: filters.sort || null,
         sortDir: filters.sortDir || "desc",
       });
+
+      // A newer load (retry / filter change) superseded this page request;
+      // discard the result so we never merge stale pages into fresh state.
+      if (token !== loadTokenRef.current) return;
 
       const normalized = normalizeInvoicePageResult(pageResponse);
       if (normalized.invalidCursor) {
@@ -667,6 +684,7 @@ export function InvestMarketplace({
       setHasMore(Boolean(normalized.hasMore) || normalized.nextCursor !== null);
       setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, merged.length));
     } catch {
+      if (token !== loadTokenRef.current) return;
       setLoadError(copy.invest.errorDescription);
       setCursorError("");
     } finally {
