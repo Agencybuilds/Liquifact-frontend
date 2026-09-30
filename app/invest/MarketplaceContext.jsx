@@ -39,6 +39,9 @@ export function MarketplaceProvider({ children, invoices, setInvoices }) {
    * 3. On success — the optimistic status stays (committed).
    * 4. On failure — the invoice reverts to its original status and the error
    *    is re-thrown so the caller can surface a toast.
+   * 5. Concurrent calls for the same invoice id are rejected deterministically
+   *    (returns false) so retries/duplicates cannot interleave optimistic
+   *    updates or rollbacks and corrupt state.
    *
    * @param {string}   invoiceId
    * @param {number}   amount
@@ -47,28 +50,30 @@ export function MarketplaceProvider({ children, invoices, setInvoices }) {
    */
   const fundInvoice = useCallback(
     async (invoiceId, amount, performAction) => {
-      return fund(invoiceId, amount, performAction, {
-        optimisticUpdate: (id) => {
-          // Snapshot the current invoice for rollback.
-          const current = invoices?.find((inv) => inv.id === id) ?? null;
-          const snapshot = current ? { ...current } : null;
+      {
+        return await fund(invoiceId, amount, performAction, {
+          optimisticUpdate: (id) => {
+            // Snapshot the current invoice for rollback.
+            const current = invoices?.find((inv) => inv.id === id) ?? null;
+            const snapshot = current ? { ...current } : null;
 
-          // Flip status immediately.
-          setInvoices((prev) =>
-            Array.isArray(prev)
-              ? prev.map((inv) => (inv.id === id ? { ...inv, status: "Funded" } : inv))
-              : prev
-          );
+            // Flip status immediately.
+            setInvoices((prev) =>
+              Array.isArray(prev)
+                ? prev.map((inv) => (inv.id === id ? { ...inv, status: "Funded" } : inv))
+                : prev
+            );
 
-          return snapshot;
-        },
-        rollback: (id, snapshot) => {
-          if (!snapshot) return;
-          setInvoices((prev) =>
-            Array.isArray(prev) ? prev.map((inv) => (inv.id === id ? snapshot : inv)) : prev
-          );
-        },
-      });
+            return snapshot;
+          },
+          rollback: (id, snapshot) => {
+            if (!snapshot) return;
+            setInvoices((prev) =>
+              Array.isArray(prev) ? prev.map((inv) => (inv.id === id ? snapshot : inv)) : prev
+            );
+          },
+        });
+      }
     },
     [fund, invoices, setInvoices]
   );
