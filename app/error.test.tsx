@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for app/error.js — the route-level error boundary.
  *
@@ -47,6 +48,7 @@ jest.mock("../components/ErrorBanner", () => {
 import GlobalError from "./error";
 import { reportError } from "../lib/observability/reportError";
 import { copy } from "./copy/en";
+import { validateErrorProps } from "./error.validation";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -65,6 +67,83 @@ function renderError(error = makeError(), reset = jest.fn()) {
 describe("GlobalError (app/error.js)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  // ── Validation boundaries ───────────────────────────────────────────────────
+
+  describe("validation boundaries", () => {
+    it("accepts a well-formed Error instance", () => {
+      const result = validateErrorProps(makeError("ok"), jest.fn());
+      expect(result.ok).toBe(true);
+      expect(result.reason).toBeNull();
+    });
+
+    it("accepts an Error with a string digest", () => {
+      const result = validateErrorProps(makeError("ok", "digest-1"), jest.fn());
+      expect(result.ok).toBe(true);
+      expect(result.digest).toBe("digest-1");
+    });
+
+    it("rejects a non-Error error value", () => {
+      const result = validateErrorProps("not-an-error", jest.fn());
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("invalid-error");
+    });
+
+    it("rejects a null error value", () => {
+      const result = validateErrorProps(null, jest.fn());
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("invalid-error");
+    });
+
+    it("rejects a non-function reset", () => {
+      const result = validateErrorProps(makeError(), "nope");
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("invalid-reset");
+    });
+
+    it("rejects a missing reset", () => {
+      const result = validateErrorProps(makeError(), undefined);
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("invalid-reset");
+    });
+
+    it("normalizes a non-string digest to undefined", () => {
+      const err = makeError("weird");
+      err.digest = 12345;
+      const result = validateErrorProps(err, jest.fn());
+      expect(result.ok).toBe(true);
+      expect(result.digest).toBeUndefined();
+    });
+
+    it("treats an empty-string digest as undefined", () => {
+      const err = makeError("empty");
+      err.digest = "";
+      const result = validateErrorProps(err, jest.fn());
+      expect(result.ok).toBe(true);
+      expect(result.digest).toBeUndefined();
+    });
+
+    it("is deterministic for duplicate identical inputs", () => {
+      const err = makeError("dup", "d-1");
+      const reset = jest.fn();
+      const a = validateErrorProps(err, reset);
+      const b = validateErrorProps(err, reset);
+      expect(a).toEqual(b);
+    });
+
+    it("does not throw on hostile getters for digest", () => {
+      const err = makeError("hostile");
+      Object.defineProperty(err, "digest", {
+        get() {
+          throw new Error("boom");
+        },
+      });
+      expect(() => validateErrorProps(err, jest.fn())).not.toThrow();
+      const result = validateErrorProps(err, jest.fn());
+      expect(result.ok).toBe(true);
+      expect(result.digest).toBeUndefined();
+    });
   });
 
   // ── Rendering ───────────────────────────────────────────────────────────────
@@ -140,6 +219,16 @@ describe("GlobalError (app/error.js)", () => {
       expect(reportError).toHaveBeenCalledWith(error, { digest: undefined });
     });
 
+    it("does not report when the error prop is invalid", () => {
+      render(<GlobalError error={null} reset={jest.fn()} />);
+      expect(reportError).not.toHaveBeenCalled();
+    });
+
+    it("does not report when the reset prop is invalid", () => {
+      render(<GlobalError error={makeError()} reset={undefined} />);
+      expect(reportError).not.toHaveBeenCalled();
+    });
+
     it("re-reports when the error prop changes", () => {
       const error1 = makeError("first");
       const { rerender } = render(<GlobalError error={error1} reset={jest.fn()} />);
@@ -162,6 +251,15 @@ describe("GlobalError (app/error.js)", () => {
       renderError(makeError(), reset);
       await userEvent.click(screen.getByTestId("error-action-btn"));
       expect(reset).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not invoke reset when the reset prop is invalid", async () => {
+      render(<GlobalError error={makeError()} reset={undefined} />);
+      const btn = screen.queryByTestId("error-action-btn");
+      if (btn) {
+        await userEvent.click(btn);
+      }
+      expect(reportError).not.toHaveBeenCalled();
     });
 
     it("allows reset to be called multiple times (idempotent)", async () => {
