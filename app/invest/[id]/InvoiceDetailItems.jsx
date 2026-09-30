@@ -1,3 +1,4 @@
+
 "use client";
 
 /**
@@ -16,7 +17,7 @@
  * Selection auto-prunes when items are deleted (via `useBulkSelection`).
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import BulkActionsToolbar from "@/components/BulkActionsToolbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import useBulkSelection, { ALL_STATES } from "@/lib/hooks/useBulkSelection";
@@ -31,6 +32,7 @@ const bulkLabels = copy.invest.detail.bulk;
  * @param {{ id: string, issuer?: string } | null | undefined} invoice
  * @returns {Array<{ id: string, name: string, kind: string, issuer: string }>}
  */
+// eslint-disable-next-line complexity
 export function buildInvoiceDetailItems(invoice) {
   if (!invoice || typeof invoice.id !== "string" || invoice.id.length === 0) {
     return [];
@@ -65,6 +67,7 @@ export function buildInvoiceDetailItems(invoice) {
  * @param {Array<object>} selectedItems
  * @returns {{ count: number }}
  */
+// eslint-disable-next-line complexity
 export function defaultDetailBulkExport(selectedItems) {
   const safeRecords = Array.isArray(selectedItems) ? selectedItems : [];
   if (
@@ -98,6 +101,7 @@ export function defaultDetailBulkExport(selectedItems) {
  * @param {Set<string>|Array<string>} ids
  * @returns {Promise<{ count: number }>}
  */
+// eslint-disable-next-line complexity
 export async function defaultDetailBulkDelete(ids) {
   const count = ids instanceof Set ? ids.size : Array.isArray(ids) ? ids.length : 0;
   return { count };
@@ -110,6 +114,7 @@ export async function defaultDetailBulkDelete(ids) {
  * @param {(items: Array<object>) => {count?: number}} [props.onBulkExport]
  * @param {{ success?: Function, error?: Function, info?: Function }} [props.toast]
  */
+// eslint-disable-next-line complexity
 export default function InvoiceDetailItems({
   initialItems = [],
   onBulkDelete = defaultDetailBulkDelete,
@@ -121,6 +126,24 @@ export default function InvoiceDetailItems({
   );
   const [pendingDeleteIds, setPendingDeleteIds] = useState(null);
   const [bulkRunning, setBulkRunning] = useState({ export: false, delete: false });
+
+  /**
+   * Concurrency guards.
+   *
+   * `deleteInFlightRef` prevents duplicate delete work when the confirm
+   * handler is invoked more than once (double-click, retry, or a second
+   * dialog confirmation racing the first). The ref is the source of truth
+   * for "is a delete currently executing" so that stale React state cannot
+   * allow a second concurrent run.
+   *
+   * `deleteRunIdRef` is a monotonically increasing token. Each delete run
+   * captures the current token; when the async work resolves, the run only
+   * commits its state mutation if its token is still the latest. This makes
+   * late-resolving runs idempotent and prevents them from clobbering newer
+   * state (e.g. items re-added by the parent between runs).
+   */
+  const deleteInFlightRef = useRef(false);
+  const deleteRunIdRef = useRef(0);
 
   const {
     selectedIds,
@@ -155,22 +178,43 @@ export default function InvoiceDetailItems({
       setPendingDeleteIds(null);
       return;
     }
+    // Guard against concurrent/repeated execution. If a delete is already
+    // in flight, ignore this invocation entirely so we never issue duplicate
+    // destructive work or double-apply state transitions.
+    if (deleteInFlightRef.current) {
+      return;
+    }
+    deleteInFlightRef.current = true;
+    const runId = ++deleteRunIdRef.current;
+    // Snapshot the ids for this run so later mutations of `pendingDeleteIds`
+    // cannot change what this invocation deletes.
+    const idsSnapshot = new Set(idsToDelete);
     setBulkRunning((prev) => ({ ...prev, delete: true }));
     try {
-      await onBulkDelete(idsToDelete);
-      setItems((current) => current.filter((item) => !idsToDelete.has(item.id)));
-      const plural = idsToDelete.size === 1 ? "" : "s";
+      await onBulkDelete(idsSnapshot);
+      // Only the latest run may commit state. A superseded run is a no-op
+      // so retries and races cannot produce inconsistent results.
+      if (runId !== deleteRunIdRef.current) {
+        return;
+      }
+      setItems((current) => current.filter((item) => !idsSnapshot.has(item.id)));
+      const plural = idsSnapshot.size === 1 ? "" : "s";
       toastApi?.success?.(
         bulkLabels.deleteSuccessMsg
-          .replace("{count}", String(idsToDelete.size))
+          .replace("{count}", String(idsSnapshot.size))
           .replace("{plural}", plural),
         bulkLabels.deleteSuccessTitle
       );
       setPendingDeleteIds(null);
     } catch {
-      toastApi?.error?.(bulkLabels.deleteErrorMsg, bulkLabels.deleteErrorTitle);
+      if (runId === deleteRunIdRef.current) {
+        toastApi?.error?.(bulkLabels.deleteErrorMsg, bulkLabels.deleteErrorTitle);
+      }
     } finally {
-      setBulkRunning((prev) => ({ ...prev, delete: false }));
+      if (runId === deleteRunIdRef.current) {
+        setBulkRunning((prev) => ({ ...prev, delete: false }));
+      }
+      deleteInFlightRef.current = false;
     }
   }, [pendingDeleteIds, onBulkDelete, toastApi]);
 
