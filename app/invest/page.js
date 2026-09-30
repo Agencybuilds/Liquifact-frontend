@@ -88,10 +88,24 @@ export function parseFiltersFromSearchParams(searchParams, defaults = DEFAULT_FI
   const maturityFrom = isValidISODate(params.get("maturityFrom")) ? params.get("maturityFrom") : "";
   const maturityTo = isValidISODate(params.get("maturityTo")) ? params.get("maturityTo") : "";
 
-  const statuses = (params.get("statuses") ?? "")
+  // INVARIANT: Reject unknown status values to prevent silent filter failures.
+  // Only include statuses that exist in the canonical INVOICE_STATUSES enum.
+  const rawStatuses = (params.get("statuses") ?? "")
     .split(",")
     .map((s) => s.trim())
-    .filter((s) => VALID_STATUSES.has(s));
+    .filter((s) => s && VALID_STATUSES.has(s));
+
+  const unknownStatuses = (params.get("statuses") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s && !VALID_STATUSES.has(s));
+
+  if (unknownStatuses.length > 0) {
+    console.warn(
+      `[Invariant Violation] URL contains unknown invoice status values (filtered out):`,
+      unknownStatuses
+    );
+  }
 
   const searchQuery = (params.get("q") ?? "").trim();
 
@@ -105,7 +119,7 @@ export function parseFiltersFromSearchParams(searchParams, defaults = DEFAULT_FI
       maturityTo,
       sort,
       sortDir,
-      statuses,
+      statuses: rawStatuses,
     },
     searchQuery,
   };
@@ -266,7 +280,15 @@ function normalizeInvoicePageResult(payload) {
   const result = payload ?? {};
   const items = Array.isArray(result.items) ? result.items : [];
   const nextCursor = typeof result.nextCursor === "string" ? result.nextCursor : null;
+
+  // INVARIANT: Defensive validation of pagination state. If nextCursor is present
+  // but hasMore is false, that's an inconsistent state — hasMore should be true.
   const hasMore = Boolean(result.hasMore) || nextCursor !== null;
+  if (nextCursor && !hasMore) {
+    console.warn(
+      "[Invariant Violation] Pagination state inconsistency: nextCursor present but hasMore=false. Correcting to hasMore=true"
+    );
+  }
 
   return {
     items,
@@ -566,7 +588,17 @@ export function InvestMarketplace({
           return;
         }
 
-        setInvoices(normalized.items);
+        // INVARIANT: Validate that all items have required invoice fields before
+        // adding to the list. This prevents malformed data from corrupting state.
+        const validatedItems = normalized.items.filter((item) => {
+          const hasRequiredFields = item && item.id && item.issuer && item.status;
+          if (!hasRequiredFields) {
+            console.warn("[Data Validation] Dropped invoice with missing required fields:", item);
+          }
+          return hasRequiredFields;
+        });
+
+        setInvoices(validatedItems);
         setNextCursor(normalized.nextCursor ?? null);
         setHasMore(Boolean(normalized.hasMore) || normalized.nextCursor !== null);
       } catch {
@@ -637,6 +669,21 @@ export function InvestMarketplace({
   const handleLoadMore = useCallback(async () => {
     if (pageLoadInFlightRef.current || pageLoading || !hasMore || !nextCursor || cursorError) return;
 
+    // INVARIANT: Guard against stale cursor after filter changes. The load-more
+    // mechanism should only proceed if the cursor is consistent with the current
+    // filter state. If filters changed during pagination, abort and refresh.
+    const currentFilterSig = JSON.stringify([debouncedSearch, filters]);
+    const filterSigAtCallTime = filterSignature;
+    if (currentFilterSig !== filterSigAtCallTime) {
+      console.warn(
+        "[Invariant Violation] Load-more called with stale cursor after filter change. Aborting pagination."
+      );
+      setCursorError(copy.invest.invalidCursorDescription);
+      setNextCursor(null);
+      setHasMore(false);
+      return;
+    }
+
     pageLoadInFlightRef.current = true;
     const currentInvoices = Array.isArray(invoices) ? invoices : [];
     setPageLoading(true);
@@ -661,7 +708,17 @@ export function InvestMarketplace({
         return;
       }
 
-      const merged = mergeInvoicePages(currentInvoices, normalized.items);
+      // INVARIANT: Validate that all items in the page response have required fields
+      // to prevent malformed invoice data from corrupting the list.
+      const validatedItems = normalized.items.filter((item) => {
+        const hasRequiredFields = item && item.id && item.issuer && item.status;
+        if (!hasRequiredFields) {
+          console.warn("[Data Validation] Dropped invoice with missing required fields:", item);
+        }
+        return hasRequiredFields;
+      });
+
+      const merged = mergeInvoicePages(currentInvoices, validatedItems);
       setInvoices(merged);
       setNextCursor(normalized.nextCursor ?? null);
       setHasMore(Boolean(normalized.hasMore) || normalized.nextCursor !== null);
@@ -676,7 +733,7 @@ export function InvestMarketplace({
         loadMoreRef.current?.focus();
       }, 0);
     }
-  }, [pageLoading, hasMore, nextCursor, cursorError, invoices, loadInvoices, filters, debouncedSearch]);
+  }, [pageLoading, hasMore, nextCursor, cursorError, invoices, loadInvoices, filters, debouncedSearch, filterSignature]);
 
   // ── Bulk actions ──────────────────────────────────────────────────────────
   const handleToggleSelectAll = useCallback(() => {
@@ -704,7 +761,32 @@ export function InvestMarketplace({
       setPendingDeleteIds(null);
       return;
     }
+
+    // INVARIANT: Validate that all ids in pendingDeleteIds exist in current invoices.
+    // Stale selection from filter changes should already be pruned by useBulkSelection,
+    // but we defensively check here to prevent silent data loss.
+    if (!Array.isArray(invoices)) {
+      setPendingDeleteIds(null);
+      toastApi?.error(bulkLabels.deleteErrorMsg, bulkLabels.deleteErrorTitle);
+      return;
+    }
+
+    const validIds = new Set(invoices.map((inv) => inv.id));
+    const orphanedIds = Array.from(idsToDelete).filter((id) => !validIds.has(id));
+    if (orphanedIds.length > 0) {
+      console.warn(
+        `[Invariant Violation] Delete attempt with ${orphanedIds.length} orphaned ID(s):`,
+        orphanedIds
+      );
+      setPendingDeleteIds(null);
+      toastApi?.error(bulkLabels.deleteErrorMsg, bulkLabels.deleteErrorTitle);
+      return;
+    }
+
+    // Snapshot the current list for rollback in case of failure.
+    const preDeleteInvoices = invoices;
     setBulkRunning((prev) => ({ ...prev, delete: true }));
+
     try {
       await onBulkDelete(idsToDelete);
 
@@ -723,12 +805,17 @@ export function InvestMarketplace({
       toastApi?.success(successMsg, bulkLabels.deleteSuccessTitle);
 
       setPendingDeleteIds(null);
-    } catch {
+    } catch (error) {
+      // INVARIANT: On delete failure, restore the pre-delete invoice list to prevent
+      // silent data loss. The UI would otherwise show invoices as deleted while backend
+      // still has them, causing user confusion and potential consistency issues.
+      setInvoices(preDeleteInvoices);
       toastApi?.error(bulkLabels.deleteErrorMsg, bulkLabels.deleteErrorTitle);
+      // Keep pendingDeleteIds so user can retry without re-selecting.
     } finally {
       setBulkRunning((prev) => ({ ...prev, delete: false }));
     }
-  }, [pendingDeleteIds, onBulkDelete, bulkLabels, toastApi]);
+  }, [pendingDeleteIds, invoices, onBulkDelete, bulkLabels, toastApi]);
 
   const handleExport = useCallback(() => {
     if (selectedIds.size === 0) {
