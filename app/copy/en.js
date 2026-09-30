@@ -343,7 +343,8 @@ export const copy = {
     announceInvoicesLoaded: "{count} investable invoices loaded",
     announceShowing: "Showing {shown} of {total} investable invoices",
     invalidCursorTitle: "This result set is no longer valid.",
-    invalidCursorDescription: "This result set is no longer valid. Refresh the marketplace to continue.",
+    invalidCursorDescription:
+      "This result set is no longer valid. Refresh the marketplace to continue.",
     endOfList: "You have reached the end of the list.",
     filters: {
       errorYieldMin: "Minimum yield must be a non-negative number.",
@@ -441,13 +442,11 @@ export const copy = {
         bannerBodyUnknown:
           "Your wallet network could not be read. This invoice requires {invoiceNetwork}. Reconnect your wallet to continue.",
         // Shown when no wallet is connected.
-        bannerBodyDisconnected:
-          "Connect your wallet to {invoiceNetwork} to fund this invoice.",
+        bannerBodyDisconnected: "Connect your wallet to {invoiceNetwork} to fund this invoice.",
         // aria-label for screen readers describing the alert region.
         alertLabel: "Network mismatch warning",
         // Announced to screen readers when the banner first appears.
-        announceMessage:
-          "Network mismatch: please switch your wallet to {invoiceNetwork}.",
+        announceMessage: "Network mismatch: please switch your wallet to {invoiceNetwork}.",
       },
       inlineEdit: {
         editButton: "Edit {field}",
@@ -542,6 +541,12 @@ export const copy = {
     errorDescription: "Unable to load settings right now.",
     errorStatus: "Unable to load settings.",
     retryAction: "Try again",
+    timeoutTitle: "Loading timed out",
+    timeoutDescription:
+      "Settings are taking longer than expected to load. You can try again or check your connection.",
+    exhaustedTitle: "Loading failed",
+    exhaustedDescription:
+      "Settings could not be loaded after multiple attempts. Please check your connection or reload the page.",
     searchPlaceholder: "Search preferences\u2026",
     filterLegend: "Settings filters",
     filterHelp:
