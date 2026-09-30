@@ -303,9 +303,11 @@ export function SettingsPage({ loadSettings }) {
 
   const loadRef = useRef(loadSettings);
   loadRef.current = loadSettings;
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
+    const currentRequestId = ++requestIdRef.current;
     setLoading(true);
     setLoadError(null);
     setSettings(null);
@@ -318,13 +320,13 @@ export function SettingsPage({ loadSettings }) {
     }
     loader().then(
       (data) => {
-        if (!cancelled) {
+        if (!cancelled && currentRequestId === requestIdRef.current) {
           setSettings(Array.isArray(data) ? data : []);
           setLoading(false);
         }
       },
       (err) => {
-        if (!cancelled) {
+        if (!cancelled && currentRequestId === requestIdRef.current) {
           setLoadError(err);
           setSettings(null);
           setLoading(false);
@@ -568,19 +570,27 @@ export function SettingsPage({ loadSettings }) {
           description="There was a problem loading your settings. Please try again."
           actionLabel="Try again"
           onAction={() => {
+            const currentRequestId = ++requestIdRef.current;
             setLoadError(null);
             setLoading(true);
-            loadRef.current().then(
-              (data) => {
-                setSettings(Array.isArray(data) ? data : []);
-                setLoading(false);
-              },
-              (err) => {
-                setLoadError(err);
-                setSettings(null);
-                setLoading(false);
-              }
-            );
+            const loader = loadRef.current;
+            if (typeof loader === "function") {
+              loader().then(
+                (data) => {
+                  if (currentRequestId === requestIdRef.current) {
+                    setSettings(Array.isArray(data) ? data : []);
+                    setLoading(false);
+                  }
+                },
+                (err) => {
+                  if (currentRequestId === requestIdRef.current) {
+                    setLoadError(err);
+                    setSettings(null);
+                    setLoading(false);
+                  }
+                }
+              );
+            }
           }}
         />
       ) : isEmpty ? (
