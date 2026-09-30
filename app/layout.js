@@ -72,8 +72,15 @@ const THEME_SCRIPT = `(function(){
   document.documentElement.setAttribute('data-theme', effective);
 })();`;
 
+const CSP_NONCE_PATTERN = /^[A-Za-z0-9+/]{22}==$/;
+
 export default async function RootLayout({ children }) {
-  const nonce = (await headers()).get("x-nonce") ?? undefined;
+  // Keep request headers local to this render; never share nonce state across requests.
+  const requestHeaders = await headers();
+  const nonce = requestHeaders.get("x-nonce");
+  if (!nonce || !CSP_NONCE_PATTERN.test(nonce)) {
+    throw new Error("Root layout requires a valid CSP nonce.");
+  }
 
   return (
     <html lang="en">
