@@ -752,3 +752,44 @@ export const copy = {
     byActor: "By {actor}",
   },
 };
+
+/**
+ * Safely resolves a path against the copy dictionary.
+ * 
+ * @param {string} path - The dot-separated path to resolve (e.g., "invest.detail.pageTitle").
+ * @param {Record<string, string|number>} [params] - Optional parameters to replace in the copy string.
+ * @returns {string} The resolved copy string, or a fallback if the path is invalid.
+ */
+export function getCopy(path, params = {}) {
+  if (typeof path !== 'string' || path.trim() === '') {
+    return 'Missing copy: invalid path';
+  }
+
+  const keys = path.split('.');
+  let current = copy;
+
+  for (const key of keys) {
+    if (current == null || typeof current !== 'object') {
+      return `Missing copy: ${path}`;
+    }
+    current = current[key];
+  }
+
+  if (typeof current !== 'string') {
+    return `Missing copy: ${path}`;
+  }
+
+  let result = current;
+
+  if (params && typeof params === 'object') {
+    for (const [key, value] of Object.entries(params)) {
+      if (key && typeof key === 'string') {
+        const safeValue = value == null ? '' : String(value);
+        // Safely replace without regex injection risk
+        result = result.split(`{${key}}`).join(safeValue);
+      }
+    }
+  }
+
+  return result;
+}
