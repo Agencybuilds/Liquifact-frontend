@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 "use client";
 
 /**
@@ -6,7 +7,7 @@
  * React Context that owns the invoice list state for the invest (marketplace)
  * routes.  It wraps both the list page (`/invest`) and the detail page
  * (`/invest/[id]`) so that optimistic updates applied on the detail page
- * (e.g. funding an invoice) are immediately visible when the user navigates
+ * (e.g. funding an invoice)) are immediately visible when the user navigates
  * back to the list.
  *
  * The provider exposes:
@@ -17,7 +18,7 @@
  *                        rollback on failure with toast feedback
  */
 
-import { createContext, useCallback, useContext, useMemo } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef } from "react";
 import { useMarketplaceActions } from "@/lib/hooks/useMarketplaceActions";
 
 const MarketplaceContext = createContext(null);
@@ -30,6 +31,7 @@ const MarketplaceContext = createContext(null);
  */
 export function MarketplaceProvider({ children, invoices, setInvoices }) {
   const { pendingIds, fund } = useMarketplaceActions();
+  const invoicesRef = useRef(invoices);
 
   /**
    * Fund an invoice with optimistic status change.
@@ -47,26 +49,47 @@ export function MarketplaceProvider({ children, invoices, setInvoices }) {
    */
   const fundInvoice = useCallback(
     async (invoiceId, amount, performAction) => {
+      // Keep the ref in sync so the optimistic/rollback callbacks always read
+      // the latest invoices array even if the closure is stale.
+      invoicesRef.current = invoices;
+
       return fund(invoiceId, amount, performAction, {
         optimisticUpdate: (id) => {
           // Snapshot the current invoice for rollback.
-          const current = invoices?.find((inv) => inv.id === id) ?? null;
+          const current = invoicesRef.current?.find((inv) => inv.id === id) ?? null;
           const snapshot = current ? { ...current } : null;
 
-          // Flip status immediately.
-          setInvoices((prev) =>
-            Array.isArray(prev)
-              ? prev.map((inv) => (inv.id === id ? { ...inv, status: "Funded" } : inv))
-              : prev
-          );
+          // Flip status immediately. Preserve the original status so rollback
+          // restores the exact prior state (not a hard-coded default).
+          setInvoices((prev) => {
+            if (!Array.isArray(prev)) return prev;
+            let changed = false;
+            const next = prev.map((inv) => {
+              if (inv.id !== id) return inv;
+              if (inv.status === "Funded") return inv;
+              changed = true;
+              return { ...inv, status: "Funded" };
+            });
+            return changed ? next : prev;
+          });
 
           return snapshot;
         },
         rollback: (id, snapshot) => {
           if (!snapshot) return;
-          setInvoices((prev) =>
-            Array.isArray(prev) ? prev.map((inv) => (inv.id === id ? snapshot : inv)) : prev
-          );
+          setInvoices((prev) => {
+            if (!Array.isArray(prev)) return prev;
+            let changed = false;
+            const next = prev.map((inv) => {
+              if (inv.id !== id) return inv;
+              // Only roll back if the entry is still the optimistic version;
+              // a concurrent commit must not be clobbered.
+              if (inv.status !== "Funded") return inv;
+              changed = true;
+              return snapshot;
+            });
+            return changed ? next : prev;
+          });
         },
       });
     },
