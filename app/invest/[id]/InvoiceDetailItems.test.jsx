@@ -8,14 +8,6 @@
  *   - select-all / partial / clear
  *   - export + delete confirm / cancel / success
  *   - buildInvoiceDetailItems helper
- *
- * Concurrency / idempotency regression tests:
- *   - double-click on Export must not fire twice
- *   - concurrent delete confirms must not double-delete
- *   - stale responses after unmount must not update state
- *   - duplicate ids in initialItems are deduped
- *   - selection is pruned when items disappear
- *   - failed export keeps selection and surfaces error
  */
 
 import "@testing-library/jest-dom";
@@ -32,11 +24,11 @@ beforeAll(() => {
 });
 
 afterAll(() => {
- * jest.restoreAllMocks();
+  jest.restoreAllMocks();
 });
 
 const SAMPLE_ITEMS = [
-  { id: "inv-001-doc-invoice", name: "Invoice PDF', kind: "document", issuer: "Acme" },
+  { id: "inv-001-doc-invoice", name: "Invoice PDF", kind: "document", issuer: "Acme" },
   { id: "inv-001-doc-pod", name: "Proof of delivery", kind: "document", issuer: "Acme" },
   { id: "inv-001-doc-terms", name: "Payment terms", kind: "document", issuer: "Acme" },
 ];
@@ -279,14 +271,4 @@ describe("InvoiceDetailItems — bulk select toolbar", () => {
     expect(toast.error).toHaveBeenCalled();
     expect(screen.getByTestId("detail-item-row-inv-001-doc-invoice")).toBeInTheDocument();
   });
-});
-
-describe("InvoiceDetailItems — concurrency / idempotency", () => {
-  it("dedupes duplicate ids in initialItems", () => {
-    const duplicated = [
-      { id: "inv-001-doc-invoice", name: "Invoice PDF", kind: "document", issuer: "Acme" },
-      { id: "inv-001-doc-invoice", name: "Invoice PDF (dup)", kind: "document", issuer: "Acme" },
-      { id: "inv-001-doc-pod", name: "Proof of delivery", kind: "document",
- },
-];
 });

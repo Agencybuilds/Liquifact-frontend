@@ -1,4 +1,3 @@
-
 "use client";
 
 /**
@@ -32,7 +31,6 @@ const bulkLabels = copy.invest.detail.bulk;
  * @param {{ id: string, issuer?: string } | null | undefined} invoice
  * @returns {Array<{ id: string, name: string, kind: string, issuer: string }>}
  */
-// eslint-disable-next-line complexity
 export function buildInvoiceDetailItems(invoice) {
   if (!invoice || typeof invoice.id !== "string" || invoice.id.length === 0) {
     return [];
@@ -67,7 +65,6 @@ export function buildInvoiceDetailItems(invoice) {
  * @param {Array<object>} selectedItems
  * @returns {{ count: number }}
  */
-// eslint-disable-next-line complexity
 export function defaultDetailBulkExport(selectedItems) {
   const safeRecords = Array.isArray(selectedItems) ? selectedItems : [];
   if (
@@ -101,7 +98,6 @@ export function defaultDetailBulkExport(selectedItems) {
  * @param {Set<string>|Array<string>} ids
  * @returns {Promise<{ count: number }>}
  */
-// eslint-disable-next-line complexity
 export async function defaultDetailBulkDelete(ids) {
   const count = ids instanceof Set ? ids.size : Array.isArray(ids) ? ids.length : 0;
   return { count };
@@ -114,7 +110,6 @@ export async function defaultDetailBulkDelete(ids) {
  * @param {(items: Array<object>) => {count?: number}} [props.onBulkExport]
  * @param {{ success?: Function, error?: Function, info?: Function }} [props.toast]
  */
-// eslint-disable-next-line complexity
 export default function InvoiceDetailItems({
   initialItems = [],
   onBulkDelete = defaultDetailBulkDelete,
