@@ -11,6 +11,19 @@
  * Contract per item: { id, issuer, amount, currency, dueDate, yield, status }
  * NOTE: yield values are illustrative; contracts use on-chain basis points and
  * actual settlement is at maturity.
+ *
+ * Concurrency invariants (hardened, ISSUE-1)
+ * ──────────────────────────────────────────
+ * Only one real fetch can be in-flight at a time. Concurrent callers that
+ * arrive while a fetch is already in progress share the same Promise
+ * (fan-out) so a burst of requests produces exactly one timer/network trip.
+ * An AbortSignal passed via the signal option cancels only that caller's
+ * participation without interrupting other concurrent waiters.
+ * The in-flight slot is cleared on settlement so the next independent call
+ * starts a fresh fetch (no stale promise reuse).
+ * The test-hook override (window.__TEST_MOCK_INVOICES__) is accepted only
+ * in non-production browser environments and must be an Array; invalid
+ * overrides fall through to the real data path.
  */
 export const MOCK_INVOICES = [
   {
@@ -66,15 +79,110 @@ export const MOCK_INVOICES = [
 // DEV-only delay (ms) to make the skeleton visible during local development.
 const DEV_DELAY = process.env.NODE_ENV === "development" ? 1500 : 0;
 
-export function loadMockInvoices() {
-  // Test hook: Playwright / Jest tests may override the fixture by setting
-  // window.__TEST_MOCK_INVOICES__ before the component mounts.  The override
-  // is ignored in non-browser (SSR) environments and in production builds.
-  if (typeof window !== "undefined" && window.__TEST_MOCK_INVOICES__) {
-    return Promise.resolve(window.__TEST_MOCK_INVOICES__);
+// In-flight deduplication slot.
+// Invariant: null when idle, a pending Promise when a fetch is in progress.
+// Never replaced mid-flight — set to null only on settlement so callers always
+// receive fresh data on the next independent call.
+let _inflight = null;
+
+/**
+ * Resolve the test-hook override when in a valid non-production browser env.
+ * Returns the override array when valid, or null to fall through.
+ * @returns {Array|null}
+ */
+function getTestOverride() {
+  if (
+    typeof window === "undefined" ||
+    process.env.NODE_ENV === "production"
+  ) {
+    return null;
   }
-  return new Promise((resolve) => {
-    setTimeout(() => resolve(MOCK_INVOICES), DEV_DELAY);
+  const override = window.__TEST_MOCK_INVOICES__;
+  // Must be an Array; non-array values (strings, booleans, etc.) are ignored.
+  if (!Array.isArray(override)) return null;
+  return override;
+}
+
+/**
+ * Load mock invoices, deduplicated across concurrent callers.
+ *
+ * Test hook: Playwright / Jest tests may override the fixture by setting
+ * window.__TEST_MOCK_INVOICES__ before the component mounts.  The override
+ * is ignored in SSR environments and in production builds, and must be an
+ * Array (empty arrays are valid "no invoices" fixtures).
+ *
+ * @param {object}      [options]
+ * @param {AbortSignal} [options.signal] - When aborted, this caller's promise
+ *   rejects with an AbortError. Other concurrent waiters are unaffected.
+ *
+ * @returns {Promise<Array>} Resolves with the invoice array.
+ */
+export function loadMockInvoices(options = {}) {
+  const { signal } = options;
+
+  // Fast-path: already aborted before we start.
+  if (signal?.aborted) {
+    return Promise.reject(
+      Object.assign(new DOMException("Load aborted", "AbortError"), { code: 20 })
+    );
+  }
+
+  // Test-hook path: bypass deduplication for deterministic fixtures.
+  const testOverride = getTestOverride();
+  if (testOverride !== null) {
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console
+      console.debug("[invest/lib] loadMockInvoices: test override (" + testOverride.length + " invoices)");
+    }
+    return Promise.resolve(testOverride);
+  }
+
+  // Attach to an existing in-flight fetch or start a new one.
+  if (!_inflight) {
+    _inflight = new Promise((resolve) => {
+      setTimeout(() => {
+        _inflight = null; // clear slot before resolving so next call is fresh
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.debug("[invest/lib] loadMockInvoices: resolved " + MOCK_INVOICES.length + " invoices");
+        }
+        resolve(MOCK_INVOICES);
+      }, DEV_DELAY);
+    });
+  }
+
+  // No AbortSignal — return the shared promise directly.
+  if (!signal) {
+    return _inflight;
+  }
+
+  // AbortSignal path: race the shared fetch against this caller's abort.
+  // Wrapping in a new Promise keeps _inflight intact for other waiters.
+  return new Promise((resolve, reject) => {
+    function onAbort() {
+      signal.removeEventListener("abort", onAbort);
+      reject(
+        Object.assign(new DOMException("Load aborted", "AbortError"), { code: 20 })
+      );
+    }
+
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true });
+
+    _inflight.then(
+      (data) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(data);
+      },
+      (err) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      }
+    );
   });
 }
 
