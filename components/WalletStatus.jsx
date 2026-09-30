@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useContext } from "react";
 import Button from "./Button";
 import { copy } from "../app/copy/en";
+import { TRUSTED_WALLET_INSTALL_URL } from "../app/copy/constants";
 import { WalletContext, WALLET_STATES, truncateAddress } from "./WalletProvider";
 import { useToast } from "./ToastProvider";
 import { copyToClipboard } from "../lib/clipboard";
@@ -16,6 +17,59 @@ const WALLET_SPACING = {
   compact: { gap: "gap-1", padding: "p-2" },
   comfortable: { gap: "gap-3", padding: "p-4" },
 };
+
+/**
+ * Validate the wallet-install URL without exposing path/query values in
+ * diagnostics. The trusted default is a build-time constant, not mutable UI
+ * copy, so repeated renders cannot be influenced by shared dictionary writes.
+ *
+ * @param {unknown} url
+ * @returns {{ ok: true, href: string } | { ok: false, reason: string, protocol?: string }}
+ */
+export function validateWalletInstallUrl(url) {
+  if (typeof url !== "string" || url.length === 0) {
+    return { ok: false, reason: "missing-url" };
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, reason: "invalid-url" };
+  }
+
+  if (parsed.protocol !== "https:") {
+    return {
+      ok: false,
+      reason: "non-https-url",
+      protocol: parsed.protocol || "unknown",
+    };
+  }
+
+  return { ok: true, href: parsed.href };
+}
+
+/**
+ * Open the trusted wallet-install page in a separate browsing context.
+ * Invalid URLs are rejected with non-sensitive diagnostics.
+ *
+ * @param {unknown} [url]
+ * @returns {boolean} True when navigation was attempted.
+ */
+export function openTrustedWalletInstallUrl(url = TRUSTED_WALLET_INSTALL_URL) {
+  const validation = validateWalletInstallUrl(url);
+
+  if (validation.ok) {
+    window.open(validation.href, "_blank", "noopener,noreferrer");
+    return true;
+  }
+
+  const diagnostic = validation.protocol
+    ? { reason: validation.reason, protocol: validation.protocol }
+    : { reason: validation.reason };
+  console.error("Blocked unsafe wallet install URL.", diagnostic);
+  return false;
+}
 
 /**
  * Returns a concise, non-sensitive announcement string for a wallet state
@@ -230,18 +284,7 @@ export default function WalletStatus() {
         break;
 
       case WALLET_STATES.NO_WALLET:
-        {
-          const url = copy.wallet.installWalletUrl;
-          // Only allow https URLs for security
-          if (typeof url === "string" && url.startsWith("https://")) {
-            window.open(url, "_blank", "noopener,noreferrer");
-          } else {
-            console.error(
-              "Blocked attempt to open a non-HTTPS wallet URL for security reasons:",
-              url
-            );
-          }
-        }
+        openTrustedWalletInstallUrl();
         break;
 
       default:
