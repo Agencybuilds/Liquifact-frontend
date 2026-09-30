@@ -1,3 +1,4 @@
+
 /**
  * Tests for app/not-found.js — the branded 404 boundary.
  *
@@ -8,6 +9,7 @@
  */
 import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { axe } from "jest-axe";
 import React from "react";
 
@@ -18,6 +20,12 @@ import { copy } from "./copy/en";
 
 function renderNotFound() {
   return render(<NotFound />);
+}
+
+function renderNotFoundWithRouter() {
+  const push = jest.fn();
+  const replace = jest.fn();
+  return { push, replace, ...render(<NotFound />) };
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -56,6 +64,14 @@ describe("NotFound (app/not-found.js)", () => {
       const headings = screen.getAllByRole("heading", { level: 1 });
       expect(headings).toHaveLength(1);
     });
+
+    it("renders the same output on repeated renders (deterministic)", () => {
+      const first = renderNotFound();
+      const firstHtml = first.container.innerHTML;
+      first.unmount();
+      const second = renderNotFound();
+      expect(second.container.innerHTML).toBe(firstHtml);
+    });
   });
 
   // ── Home link ────────────────────────────────────────────────────────────────
@@ -91,6 +107,19 @@ describe("NotFound (app/not-found.js)", () => {
       const link = screen.getByTestId("not-found-home-link");
       expect(link.className).toContain("focus-ring");
     });
+
+    it("the home link has an accessible name matching the label", () => {
+      renderNotFound();
+      const link = screen.getByTestId("not-found-home-link");
+      expect(link).toHaveAccessibleName(copy.notFound.homeLabel);
+    });
+
+    it("the home link is reachable via keyboard tab order", async () => {
+      const user = userEvent.setup();
+      renderNotFound();
+      await user.tab();
+      expect(screen.getByTestId("not-found-home-link")).toHaveFocus();
+    });
   });
 
   // ── ARIA / landmarks ─────────────────────────────────────────────────────────
@@ -118,12 +147,31 @@ describe("NotFound (app/not-found.js)", () => {
       const badge = document.querySelector("[aria-hidden='true']");
       expect(badge).toHaveAttribute("aria-hidden", "true");
     });
+
+    it("the main landmark is the only main landmark", () => {
+      renderNotFound();
+      expect(screen.getAllByRole("main")).toHaveLength(1);
+    });
+
+    it("the aria-labelledby target resolves to an existing element", () => {
+      renderNotFound();
+      const main = screen.getByRole("main");
+      const id = main.getAttribute("aria-labelledby");
+      expect(id).toBeTruthy();
+      expect(document.getElementById(id as string)).toBeInTheDocument();
+    });
   });
 
   // ── Accessibility ────────────────────────────────────────────────────────────
 
   describe("accessibility", () => {
     it("has no axe violations", async () => {
+      const { container } = renderNotFound();
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it("has no axe violations when rendered twice (idempotent)", async () => {
       const { container } = renderNotFound();
       const results = await axe(container);
       expect(results).toHaveNoViolations();
@@ -150,6 +198,13 @@ describe("NotFound (app/not-found.js)", () => {
       const badge = document.querySelector("[aria-hidden='true']");
       expect(badge?.className).toContain("text-cyan-500");
     });
+
+    it("does not leak interactive state across re-renders", () => {
+      const { container, rerender } = renderNotFound();
+      const before = container.innerHTML;
+      rerender(<NotFound />);
+      expect(container.innerHTML).toBe(before);
+    });
   });
 
   // ── Unknown route navigation (snapshot regression) ────────────────────────────
@@ -158,6 +213,21 @@ describe("NotFound (app/not-found.js)", () => {
     it("renders consistently across test runs", () => {
       const { container } = renderNotFound();
       expect(container.firstChild).toMatchSnapshot();
+    });
+
+    it("does not mutate global state between renders", () => {
+      const { container: a } = renderNotFound();
+      const htmlA = a.innerHTML;
+      const { container: b } = renderNotFound();
+      expect(b.innerHTML).toBe(htmlA);
+    });
+  });
+
+  describe("invariants", () => {
+    it("exposes exactly one link and one main landmark (state invariant)", () => {
+      renderNotFound();
+      expect(screen.getAllByRole("link")).toHaveLength(1);
+      expect(screen.getAllByRole("main")).toHaveLength(1);
     });
   });
 });
