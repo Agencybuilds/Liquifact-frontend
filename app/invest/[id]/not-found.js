@@ -15,8 +15,8 @@ export default function InvoiceNotFound() {
       <main className="max-w-4xl mx-auto px-6 py-12 text-center">
         <h1 className="text-3xl font-bold mb-4">Invoice not found</h1>
         <p className="text-slate-400 mb-8 max-w-md mx-auto">
-          We could not find that invoice in the marketplace. It may have been
-          removed or the link might be incorrect.
+          We could not find that invoice in the marketplace. It may have been removed or the link
+          might be incorrect.
         </p>
         <Link
           href="/invest"

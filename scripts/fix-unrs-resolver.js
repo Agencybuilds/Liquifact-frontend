@@ -7,11 +7,11 @@
  * and filesystem lookups.  Safe to run on any platform — if the native
  * binding loads fine the script is a no-op.
  */
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
-const pkgDir = path.join(__dirname, '..', 'node_modules', 'unrs-resolver');
-const indexPath = path.join(pkgDir, 'index.js');
+const pkgDir = path.join(__dirname, "..", "node_modules", "unrs-resolver");
+const indexPath = path.join(pkgDir, "index.js");
 
 // If the package is missing entirely, skip silently (e.g. npm ci in progress)
 if (!fs.existsSync(indexPath)) {
@@ -80,5 +80,5 @@ class ResolverFactory {
 module.exports = { ResolverFactory };
 `;
 
-fs.writeFileSync(indexPath, replacement, 'utf8');
-console.log('🔧 unrs-resolver: patched with JS fallback');
+fs.writeFileSync(indexPath, replacement, "utf8");
+console.log("🔧 unrs-resolver: patched with JS fallback");

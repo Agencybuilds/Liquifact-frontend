@@ -1,40 +1,67 @@
-"use client";
+import React, { useEffect, useRef } from "react";
+import { SEARCH_SHORTCUT_KEY, createShortcutMatcher } from "../lib/shortcuts";
 
-/**
- * InvoiceSearch — A controlled search input for filtering invoices by issuer name.
- *
- * Renders a labelled search field styled to match the existing slate/cyan
- * marketplace theme. A clear button appears when the input has a value.
- *
- * @param {Object} props
- * @param {string} props.value  - Current search query (controlled by parent).
- * @param {(value: string) => void} props.onChange - Called with the new value on every keystroke.
- * @param {string} [props.placeholder] - Placeholder text for the input.
- */
-export default function InvoiceSearch({ value, onChange, placeholder }) {
+export default function InvoiceSearch({
+  value,
+  onChange,
+  "aria-label": ariaLabel,
+  placeholder,
+  searchTerm,
+  onSearchChange,
+  sortOption,
+  onSortChange,
+  filters,
+  onFiltersChange,
+}) {
+  // Support both controlled patterns: {value, onChange} and {searchTerm, onSearchChange}
+  const inputValue = value !== undefined ? value : (searchTerm ?? "");
+  const handleChange = onChange ?? ((e) => onSearchChange?.(e.target.value));
+
+  const inputRef = useRef(null);
+
+  // Global `/` shortcut: pressing `/` anywhere on the page (except inside an
+  // editable control) focuses the search input. The matcher and key are
+  // imported from the shared registry (`lib/shortcuts.js`) so the
+  // ShortcutHelpDialog renders this shortcut from the same source of truth.
+  useEffect(() => {
+    const handler = createShortcutMatcher(SEARCH_SHORTCUT_KEY, (e) => {
+      e.preventDefault();
+      inputRef.current?.focus();
+    });
+
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   return (
-    <div className="flex items-center gap-2">
-      <label htmlFor="issuer-search" className="sr-only">
-        Search by issuer name
-      </label>
-      <input
-        id="issuer-search"
-        type="search"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder || "Search issuer\u2026"}
-        className="rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 transition-colors"
-      />
-      {value ? (
+    <div className="mb-8 rounded-xl border border-slate-800 bg-slate-900/30 p-6">
+      <div className="mb-4">
+        <input
+          ref={inputRef}
+          type="text"
+          placeholder={placeholder || "Search invoices..."}
+          value={inputValue}
+          onChange={handleChange}
+          aria-label={ariaLabel}
+          className="w-full rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+        />
+      </div>
+      <div className="flex flex-wrap gap-4 items-center opacity-60">
         <button
           type="button"
-          onClick={() => onChange("")}
-          className="rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2 text-sm text-cyan-400 hover:bg-slate-700/50 transition-colors"
-          aria-label="Clear search"
+          disabled
+          className="rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2 text-sm text-slate-500"
         >
-          Clear
+          Sort: {sortOption || "Best Yield"}
         </button>
-      ) : null}
+        <button
+          type="button"
+          disabled
+          className="rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2 text-sm text-slate-500"
+        >
+          Filters: {filters > 0 ? filters.join(", ") : "None"}
+        </button>
+      </div>
     </div>
   );
 }

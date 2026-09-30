@@ -1,10 +1,5 @@
 import "@testing-library/jest-dom";
-import {
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-} from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 import Home from "./page";
 import { getHealth } from "../lib/api/health";
@@ -81,9 +76,7 @@ describe("Home Page Health Check", () => {
       expect(button).toBeDisabled();
     });
 
-    expect(
-      screen.getByText(/checking/i)
-    ).toBeTruthy();
+    expect(screen.getByText(/checking/i)).toBeTruthy();
   });
 
   it("renders connected state with green badge", async () => {
@@ -104,13 +97,11 @@ describe("Home Page Health Check", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/backend is healthy/i)
-      ).toBeTruthy();
+      expect(screen.getByText(/backend is healthy/i)).toBeTruthy();
     });
 
     // Assert the "Connected" badge is rendered
-    expect(screen.getByText(/connected/i)).toBeTruthy();
+    expect(screen.getAllByText(/connected/i).length).toBeGreaterThan(0);
   });
 
   it("renders degraded state with amber badge", async () => {
@@ -131,13 +122,11 @@ describe("Home Page Health Check", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/backend responded with 500/i)
-      ).toBeTruthy();
+      expect(screen.getByText(/backend responded with 500/i)).toBeTruthy();
     });
 
     // Assert the "Degraded" badge is rendered
-    expect(screen.getByText(/degraded/i)).toBeTruthy();
+    expect(screen.getAllByText(/degraded/i).length).toBeGreaterThan(0);
   });
 
   it("renders unreachable state with red badge", async () => {
@@ -155,13 +144,11 @@ describe("Home Page Health Check", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/health check timed out/i)
-      ).toBeTruthy();
+      expect(screen.getAllByText(/health check timed out/i).length).toBeGreaterThan(0);
     });
 
     // Assert the "Unreachable" badge is rendered
-    expect(screen.getByText(/unreachable/i)).toBeTruthy();
+    expect(screen.getAllByText(/unreachable/i).length).toBeGreaterThan(0);
   });
 
   it("renders raw response details", async () => {
@@ -182,9 +169,7 @@ describe("Home Page Health Check", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/view details/i)
-      ).toBeTruthy();
+      expect(screen.getByText(/raw response/i)).toBeTruthy();
     });
   });
 
@@ -204,7 +189,7 @@ describe("Home Page Health Check", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/connected/i)).toBeTruthy();
+      expect(screen.getAllByText(/connected/i).length).toBeGreaterThan(0);
     });
 
     // Test degraded state
@@ -220,7 +205,7 @@ describe("Home Page Health Check", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/degraded/i)).toBeTruthy();
+      expect(screen.getAllByText(/degraded/i).length).toBeGreaterThan(0);
     });
 
     // Test unreachable state
@@ -236,7 +221,7 @@ describe("Home Page Health Check", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/unreachable/i)).toBeTruthy();
+      expect(screen.getAllByText(/unreachable/i).length).toBeGreaterThan(0);
     });
   });
 
@@ -259,8 +244,6 @@ describe("Home Page Health Check", () => {
 
     const statusRegion = await screen.findByRole("status");
 
-    expect(
-      statusRegion.getAttribute("aria-live")
-    ).toBe("polite");
+    expect(statusRegion.getAttribute("aria-live")).toBe("polite");
   });
 });

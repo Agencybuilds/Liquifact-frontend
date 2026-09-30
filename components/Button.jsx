@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { forwardRef } from 'react';
-import Spinner from './Spinner';
+import { forwardRef } from "react";
+import Spinner from "./Spinner";
 
 /**
  * @typedef {'primary' | 'secondary' | 'warning' | 'external' | 'danger'} ButtonVariant
@@ -29,41 +29,31 @@ import Spinner from './Spinner';
  * @param {string} [props.className] — Additional Tailwind classes.
  * @param {React.Ref<HTMLButtonElement>} ref — Forwarded ref.
  */
+
 const Button = forwardRef(function Button(
-  {
-    variant = 'primary',
-    loading = false,
-    disabled = false,
-    children,
-    className = '',
-    ...rest
-  },
+  { variant = "primary", loading = false, disabled = false, children, className = "", ...rest },
   ref
 ) {
   const isDisabled = disabled || loading;
 
-  // Base styles shared by every variant
+  // Base styles shared by every variant (focus-ring class centralized in globals.css)
   const baseStyles =
-    'inline-flex items-center justify-center gap-2 rounded-full px-4 py-3 ' +
-    'text-sm font-medium transition-all duration-200 ' +
-    'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ' +
-    'disabled:opacity-50 disabled:cursor-not-allowed';
+    "inline-flex items-center justify-center gap-2 rounded-full px-4 py-3 " +
+    "text-sm font-medium transition-all duration-200 " +
+    "focus-ring disabled:opacity-50 disabled:cursor-not-allowed";
+  const disabledClasses = isDisabled ? "opacity-50 cursor-not-allowed" : "";
 
   // Variant-specific styles
   const variantStyles = {
-    primary:
-      'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 active:bg-cyan-500/40',
-    secondary:
-      'border border-slate-600 text-slate-300 hover:bg-slate-800 active:bg-slate-700',
-    warning:
-      'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 active:bg-amber-500/40',
-    external:
-      'bg-violet-500/20 text-violet-400 hover:bg-violet-500/30 active:bg-violet-500/40',
-    danger:
-      'bg-red-500/20 text-red-400 hover:bg-red-500/30 active:bg-red-500/40',
+    primary: "bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 active:bg-cyan-500/40",
+    secondary: "border border-slate-600 text-slate-300 hover:bg-slate-800 active:bg-slate-700",
+    warning: "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 active:bg-amber-500/40",
+    external: "bg-violet-500/20 text-violet-400 hover:bg-violet-500/30 active:bg-violet-500/40",
+    danger: "bg-red-500/20 text-red-400 hover:bg-red-500/30 active:bg-red-500/40",
   };
 
-  const combinedClassName = `${baseStyles} ${variantStyles[variant]} ${className}`.trim();
+  const combinedClassName =
+    `${baseStyles} ${variantStyles[variant]} ${disabledClasses} ${className} cursor-pointer`.trim();
 
   return (
     <button

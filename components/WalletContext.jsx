@@ -18,4 +18,4 @@ export {
   readStoredSnapshot,
   writeStoredSnapshot,
   clearStoredSnapshot,
-} from './WalletProvider';
+} from "./WalletProvider";

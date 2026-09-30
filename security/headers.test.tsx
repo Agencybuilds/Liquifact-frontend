@@ -71,9 +71,7 @@ describe("buildContentSecurityPolicy", () => {
   });
 
   it("allow-lists the API origin in connect-src so fetch() is not blocked", () => {
-    const csp = parseCsp(
-      buildContentSecurityPolicy({ apiUrl: "https://api.liquifact.io" })
-    );
+    const csp = parseCsp(buildContentSecurityPolicy({ apiUrl: "https://api.liquifact.io" }));
     expect(csp["connect-src"]).toContain("'self'");
     expect(csp["connect-src"]).toContain("https://api.liquifact.io");
   });
@@ -105,6 +103,12 @@ describe("buildContentSecurityPolicy", () => {
     expect(csp["base-uri"]).toEqual(["'self'"]);
     expect(csp["object-src"]).toEqual(["'none'"]);
     expect(csp["form-action"]).toEqual(["'self'"]);
+  });
+
+  it("uses a nonce for inline scripts when one is supplied", () => {
+    const csp = parseCsp(buildContentSecurityPolicy({ nonce: "abc123" }));
+    expect(csp["script-src"]).toContain("'nonce-abc123'");
+    expect(csp["script-src"]).not.toContain("'unsafe-inline'");
   });
 
   it("permits 'unsafe-inline' for styles only (documented trade-off)", () => {
@@ -180,6 +184,14 @@ describe("buildSecurityHeaders", () => {
 
   it("includes a Content-Security-Policy header", () => {
     expect(asMap["Content-Security-Policy"]).toContain("default-src 'self'");
+  });
+
+  it("supports a nonce in the CSP builder output", () => {
+    const headers = buildSecurityHeaders({ nonce: "abc123" });
+    const csp = headers.find((header) => header.key === "Content-Security-Policy")?.value;
+    expect(csp).toContain("'nonce-abc123'");
+    expect(csp).toContain("script-src 'self' 'nonce-abc123'");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com");
   });
 
   it("includes Strict-Transport-Security", () => {

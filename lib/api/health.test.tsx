@@ -49,12 +49,8 @@ describe("getHealth", () => {
     mockFetch.mockResolvedValue({
       ok: false,
       status: 500,
-      json: jest.fn().mockRejectedValue(
-        new Error("Invalid JSON")
-      ),
-      text: jest.fn().mockResolvedValue(
-        "<html>Error</html>"
-      ),
+      json: jest.fn().mockRejectedValue(new Error("Invalid JSON")),
+      text: jest.fn().mockResolvedValue("<html>Error</html>"),
     } as unknown as Response);
 
     const result = await getHealth("http://localhost");
@@ -64,9 +60,7 @@ describe("getHealth", () => {
   });
 
   it("returns unreachable when offline", async () => {
-    mockFetch.mockRejectedValue(
-      new Error("Network Error")
-    );
+    mockFetch.mockRejectedValue(new Error("Network Error"));
 
     const result = await getHealth("http://localhost");
 

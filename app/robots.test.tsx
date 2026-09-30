@@ -1,14 +1,18 @@
-import { GET } from './robots';
-import { NextResponse } from 'next/server';
+if (typeof global.Request === "undefined") {
+  (global as any).Request = class Request {};
+  (global as any).Response = class Response {};
+  (global as any).Headers = class Headers {};
+}
 
-describe('Robots Route', () => {
-  it('returns proper robots.txt content', async () => {
-    const response = (await GET()) as NextResponse;
-    expect(response.status).toBe(200);
-    const txt = await response.text();
-    expect(txt).toContain('User-agent: *');
-    expect(txt).toContain('Allow: /');
+const robots = require("./robots").default;
+
+describe("Robots Route", () => {
+  it("returns proper robots meta", () => {
+    const result = robots();
+    expect(result.rules).toBeDefined();
+    expect(result.rules.userAgent).toBe("*");
+    expect(result.rules.allow).toBe("/");
     // default base URL fallback
-    expect(txt).toContain('Sitemap: http://localhost:3000/sitemap.xml');
+    expect(result.sitemap).toContain("http://localhost:3000/sitemap.xml");
   });
 });

@@ -51,7 +51,9 @@ describe("NavMenu", () => {
 
     it("mobile menu is hidden by default", () => {
       render(<NavMenu />);
-      expect(screen.queryByRole("navigation", { name: /mobile navigation/i })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("navigation", { name: /mobile navigation/i })
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -96,7 +98,9 @@ describe("NavMenu", () => {
       const toggle = screen.getByRole("button", { name: /open navigation menu/i });
       await user.click(toggle);
       await user.click(screen.getByRole("button", { name: /close navigation menu/i }));
-      expect(screen.queryByRole("navigation", { name: /mobile navigation/i })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("navigation", { name: /mobile navigation/i })
+      ).not.toBeInTheDocument();
     });
 
     it("toggle button has aria-controls pointing to mobile-menu", async () => {
@@ -133,7 +137,9 @@ describe("NavMenu", () => {
       fireEvent.keyDown(document, { key: "Escape" });
 
       await waitFor(() => {
-        expect(screen.queryByRole("navigation", { name: /mobile navigation/i })).not.toBeInTheDocument();
+        expect(
+          screen.queryByRole("navigation", { name: /mobile navigation/i })
+        ).not.toBeInTheDocument();
       });
     });
 
@@ -198,7 +204,9 @@ describe("NavMenu", () => {
       rerender(<NavMenu />);
 
       await waitFor(() => {
-        expect(screen.queryByRole("navigation", { name: /mobile navigation/i })).not.toBeInTheDocument();
+        expect(
+          screen.queryByRole("navigation", { name: /mobile navigation/i })
+        ).not.toBeInTheDocument();
       });
     });
   });
@@ -215,7 +223,9 @@ describe("NavMenu", () => {
       fireEvent.mouseDown(document.body);
 
       await waitFor(() => {
-        expect(screen.queryByRole("navigation", { name: /mobile navigation/i })).not.toBeInTheDocument();
+        expect(
+          screen.queryByRole("navigation", { name: /mobile navigation/i })
+        ).not.toBeInTheDocument();
         expect(toggle).toHaveFocus();
       });
     });
