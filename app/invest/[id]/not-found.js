@@ -1,5 +1,20 @@
 import Link from "next/link";
 
+/**
+ * Not-found boundary for the invoice detail route (`/invest/[id]`).
+ *
+ * Compatibility contract (preserved across errors, empty data, and upgrades):
+ * - Default export is a zero-props React component, so Next.js can render it
+ *   from `notFound()` without any additional wiring.
+ * - The component is deterministic and side-effect free: it never reads route
+ *   params, search params, or global state, so it renders identically for
+ *   every missing/invalid invoice ID (including malformed or duplicate ids).
+ * - The two recovery affordances (back to home, browse marketplace) are
+ *   stable public behavior and must not be removed or repointed without a
+ *   migration note.
+ * - All copy is static and non-sensitive; no invoice identifier or error
+ *   detail is echoed to the UI, preventing leakage through the not-found path.
+ */
 export default function InvoiceNotFound() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -11,8 +26,7 @@ export default function InvoiceNotFound() {
           ← LiquiFact
         </Link>
       </header>
-
-      <main className="max-w-4xl mx-auto px-6 py-12 text-center">
+      <main className="max-w-4xl mx-auto px-6 py-12 text-center" id="main-content">
         <h1 className="text-3xl font-bold mb-4">Invoice not found</h1>
         <p className="text-slate-400 mb-8 max-w-md mx-auto">
           We could not find that invoice in the marketplace. It may have been removed or the link

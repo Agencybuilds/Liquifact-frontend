@@ -17,13 +17,21 @@
  *   - `InvoiceDetailItems` — bulk-select toolbar over detail documents
  *   - `FundActions` — fund / copy link / print
  *
+ * Compatibility contract
+ * ──────────────────────
+ * The public behavior of this route is preserved across errors, empty data,
+ * and upgrades: unknown ids render the not-found boundary; malformed or
+ * missing fields degrade to `INVALID_VALUE_FALLBACK` without throwing; and
+ * JSON-LD is only emitted when it can be safely serialized.
+ *
  * Data flow
  * ─────────
  * `params.id` → `getInvoiceById(id)` (sync, mock data for now)
- *             → `notFound()` if the id is unknown
+ *             → `notFound()` if the id is unknown or malformed
  *             → RSC renders layout + passes props to client islands
  */
 
+import React from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import NavMenu from "@/components/NavMenu";
@@ -42,6 +50,23 @@ import { getMarketplaceHref } from "@/lib/marketplaceRoute";
 const detail = copy.invest.detail;
 
 // ── Pure server-side helpers (not exported to the client bundle) ──────────────
+
+/**
+ * Normalize a dynamic route id.
+ *
+ * Invariant: the id used for lookup is always a non-empty trimmed string.
+ * Returns `null` for values that cannot represent a valid id so callers can
+ * deterministically route to the not-found boundary instead of throwing.
+ *
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+function normalizeInvoiceId(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const trimmed = String(value).trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
 
 /**
  * Format a yield value as a percentage string.
@@ -125,7 +150,14 @@ export default async function InvoiceDetailPage({ params, searchParams }) {
   const { id } = await Promise.resolve(params);
   const backHref = getMarketplaceHref(searchParams || {});
 
-  const invoice = getInvoiceById(id);
+  // Deterministic id normalization: invalid/empty ids short-circuit to the
+  // not-found boundary instead of reaching the data layer with junk input.
+  const normalizedId = normalizeInvoiceId(id);
+  if (!normalizedId) {
+    notFound();
+  }
+
+  const invoice = getInvoiceById(normalizedId);
 
   if (!invoice) {
     notFound();
@@ -185,7 +217,7 @@ export default async function InvoiceDetailPage({ params, searchParams }) {
           formattedAmount={formatCurrency(invoice.amount, { currency: invoice.currency })}
           formattedYield={formatYield(invoice.yield)}
           dueDate={invoice.dueDate}
-          referenceId={invoice.id}
+          referenceId={invoice.id ?? normalizedId}
           statusPill={<StatusPill status={invoice.status ?? ""} />}
         />
 
