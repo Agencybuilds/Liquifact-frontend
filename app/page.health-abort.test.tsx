@@ -104,7 +104,7 @@ describe("Home Page – health-check abort on unmount", () => {
 
   it("treats an unmount-abort as a non-error – does not throw or surface error state", async () => {
     let rejectHealth: (err: unknown) => void;
-    const deferred = new Promise<unknown>((_res, rej) => {
+    const deferred = new Promise<unknown>((res, rej) => {
       rejectHealth = rej;
     });
 
