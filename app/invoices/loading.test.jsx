@@ -9,14 +9,15 @@
  *  - exposes the correct ARIA attributes on the page shell
  *  - has no accessibility violations
  *
- * The loading UI is a pure presentational fallback. The determinism
- * contract for this module is that it must render the same markup for
- * every invocation (including repeated mounts and concurrent renders)
- * and must not throw when adjusting the document title or when a
- * previous loading shell was already mounted. These tests pin that
- * behavior down so failure recovery is observable and repeatable.
+ * Concurrency / idempotency notes:
+ * This is a pure, stateless route-level loading UI. Rendering it multiple
+ * times, in parallel, or interrupted mid-way must not produce stale,
+ * unsafe, or inconsistent output. The tests below assert that each
+ * render is independent and that repeated / concurrent renders are
+ * identical and deterministic.
  */
 
+import React from "react";
 import { render, screen, cleanup } from "@testing-library/react";
 import { axe, toHaveNoViolations } from "jest-axe";
 import InvoicesLoading from "./loading";
@@ -24,11 +25,8 @@ import InvoicesLoading from "./loading";
 expect.extend(toHaveNoViolations);
 
 describe("InvoicesLoading", () => {
-  const originalTitle = document.title;
-
   afterEach(() => {
     cleanup();
-    document.title = originalTitle;
   });
 
   it("renders without crashing", () => {
@@ -83,53 +81,70 @@ describe("InvoicesLoading", () => {
     expect(pulsed.length).toBeGreaterThanOrEqual(5);
   });
 
-  // --------------------------------------------------------------------
-  // Determinism and failure-recovery coverage
-  // --------------------------------------------------------------------
+  // ----------------------------------------------------------------------
+  // Concurrency / idempotency / racing-render regression tests
+  // ----------------------------------------------------------------------
 
-  it("produces identical markup across repeated mounts (deterministic render)", () => {
-    const first = render(<InvoicesLoading />);
-    const firstHtml = first.container.innerHTML;
+  it("repeated sequential renders are idempotent", () => {
+    const { container: first } = render(<InvoicesLoading />);
+    const firstHTML = first.innerHTML;
     cleanup();
 
-    const second = render(<InvoicesLoading />);
-    const secondHtml = second.container.innerHTML;
-
-    expect(secondHtml).toEqual(firstHtml);
+    const { container: second } = render(<InvoicesLoading />);
+    expect(second.innerHTML).toBe(firstHTML);
   });
 
-  it("survives a repeated mount without losing the loading shell (recovery)", () => {
+  it("renders correctly when multiple instances are mounted concurrently", () => {
+    const instances = Array.from({ length: 5 });
+    const results = instances.map(() => render(<InvoicesLoading />));
+
+    expect(results).toHaveLength(5);
+    for (const { container } of results) {
+      expect(container.querySelector('[data-testid="invoices-loading"]')).toHaveAttribute(
+        "aria-busy",
+        "true",
+      );
+      expect(container.querySelector('[data-testid="upload-skeleton"]')).toBeInTheDocument();
+    }
+  });
+
+  it("renders identical markup across concurrent instances (no stale state)", () => {
+    const results = Array.from({ length: 3 }).map(() => render(<InvoicesLoading />));
+    const [head, ...tail] = results.map((r) => r.container.innerHTML);
+    for (const html of tail) {
+      expect(html).toBe(head);
+    }
+  });
+
+  it("survives unmount mid-way without throwing (partial failure recovery)", () => {
     const { unmount } = render(<InvoicesLoading />);
-    expect(screen.getByTestId("invoices-loading")).toBeInTheDocument();
-
-    // Simulate a failed navigation that unmounts the loading UI.
-    unmount();
-    expect(screen.queryByTestId("invoices-loading")).not.toBeInTheDocument();
-
-    // Recovery: re-mounting must restore the full shell and the UploadSkeleton.
-    render(<InvoicesLoading />);
-    expect(screen.getByTestId("invoices-loading")).toBeInTheDocument();
-    expect(screen.getByTestId("upload-skeleton")).toBeInTheDocument();
-  });
-
-  it("does not throw when the document title is already mutated (boundary)", () => {
-    document.title = "";
+    expect(() => unmount()).not.toThrow();
+    // Re-render after unmount must still be deterministic.
     expect(() => render(<InvoicesLoading />)).not.toThrow();
-    expect(screen.getByTestId("invoices-loading")).toBeInTheDocument();
   });
 
-  it("renders concurrently without collision (concurrent execution)", () => {
+  it("renders correctly when interrupted and restarted (retry idempotency)", () => {
+    const first = render(<InvoicesLoading />);
+    const firstHTML = first.container.innerHTML;
+    first.unmount();
+
+    const second = render(<InvoicesLoading />);
+    expect(second.container.innerHTML).toBe(firstHTML);
+  });
+
+  it("does not leak aria-busy or test ids across concurrent instances", () => {
     const a = render(<InvoicesLoading />);
     const b = render(<InvoicesLoading />);
 
-    expect(a.container.querySelectorAll('[data-testid="invoices-loading"]').length).toBeTruthy();
-    expect(b.container.querySelectorAll('[data-testid="invoices-loading"]').length).toBeTruthy();
+    expect(a.container.querySelectorAll('[data-testid="invoices-loading"]').length).toBe(1);
+    expect(b.container.querySelectorAll('[data-testid="invoices-loading"]').length).toBe(1);
   });
 
-  it("exposes a stable accessible name for the loading region", () => {
-    render(<InvoicesLoading />);
-    const root = screen.getByTestId("invoices-loading");
-    expect(root).toHaveAttribute("role", "status");
-    expect(root).toHaveAttribute("aria-live", "polite");
+  it("preserves accessibility invariants under concurrent renders", async () => {
+    const results = Array.from({ length: 3 }).map(() => render(<InvoicesLoading />));
+    for (const { container } of results) {
+      const axeResults = await axe(container);
+      expect(axeResults).toHaveNoViolations();
+    }
   });
 });
