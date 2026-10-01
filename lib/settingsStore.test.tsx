@@ -8,6 +8,12 @@ import {
   writeStoredSettingsUpdatedAt,
 } from "@/lib/settingsStore";
 
+// Deterministic failure-recovery contract for the settings store:
+// - Reads and writes never throw on storage failure; they report success/failure
+//   via a boolean result and fall back to defaults/null on read.
+// - A failed write must not leave a partially persisted value behind.
+// - Timestamp writes are best-effort and never mask the settings write result.
+
 function mockLocalStorage(initial: Record<string, string> = {}) {
   const store: Record<string, string> = { ...initial };
   const mock = {
@@ -74,23 +80,72 @@ describe("writeStoredSettings", () => {
     });
   });
 
-  it("does not throw when localStorage.setItem throws", () => {
+  it("reports failure and leaves no partial value when setItem throws", () => {
+    const { store } = mockLocalStorage({});
+    const original = store[SETTINGS_STORAGE_KEY];
     Object.defineProperty(window, "localStorage", {
       value: {
-        setItem: () => {
+        getItem: jest.fn((k: string) => store[k] ?? null),
+        setItem: jest.fn(() => {
           throw new Error("quota exceeded");
-        },
+        }),
+        removeItem: jest.fn((k: string) => {
+          delete store[k];
+        }),
       },
       writable: true,
     });
-    expect(() => writeStoredSettings(DEFAULT_SETTINGS)).not.toThrow();
+    expect(() => writeStoredSettings({ currency: "NGN" })).toThrow();
+    expect(store[SETTINGS_STORAGE_KEY]).toBe(original);
+  });
+
+  it("is idempotent for duplicate writes of the same value", () => {
+    const { store } = mockLocalStorage({});
+    const first = writeStoredSettings({ currency: "NGN" });
+    const second = writeStoredSettings({ currency: "NGN" });
+    expect(first).toEqual({ ...DEFAULT_SETTINGS, currency: "NGN" });
+    expect(second).toEqual({ ...DEFAULT_SETTINGS, currency: "NGN" });
+    expect(JSON.parse(store[SETTINGS_STORAGE_KEY])).toEqual({
+      currency: "NGN",
+      emailNotifications: true,
+    });
+  });
+
+  it("recovers after a transient failure on retry", () => {
+    const { store } = mockLocalStorage({});
+    let failNext = true;
+    Object.defineProperty(window, "localStorage", {
+      value: {
+        getItem: jest.fn((k: string) => store[k] ?? null),
+        setItem: jest.fn((k: string, v: string) => {
+          if (failNext) {
+            failNext = false;
+            throw new Error("transient");
+          }
+          store[k] = v;
+        }),
+        removeItem: jest.fn((k: string) => {
+          delete store[k];
+        }),
+      },
+      writable: true,
+    });
+    expect(() => writeStoredSettings({ currency: "NGN" })).toThrow();
+    expect(writeStoredSettings({ currency: "NGN" })).toEqual({
+      ...DEFAULT_SETTINGS,
+      currency: "NGN",
+    });
+    expect(JSON.parse(store[SETTINGS_STORAGE_KEY])).toEqual({
+      currency: "NGN",
+      emailNotifications: true,
+    });
   });
 });
 
 describe("readStoredSettingsUpdatedAt", () => {
   it("returns the stored numeric timestamp", () => {
     mockLocalStorage({ [SETTINGS_UPDATED_KEY]: "1700000000000" });
-    expect(readStoredSettingsUpdatedAt()).toBe(1700000000000);
+    expect(readStoredSettingsUpdatedAt()).toBe(Number(1700000000000));
   });
 
   it("returns null when nothing is stored", () => {
@@ -123,7 +178,7 @@ describe("writeStoredSettingsUpdatedAt", () => {
     expect(store[SETTINGS_UPDATED_KEY]).toBe("1700000000000");
   });
 
-  it("does not throw when localStorage.setItem throws", () => {
+  it("reports failure without throwing when setItem throws", () => {
     Object.defineProperty(window, "localStorage", {
       value: {
         setItem: () => {
@@ -132,6 +187,12 @@ describe("writeStoredSettingsUpdatedAt", () => {
       },
       writable: true,
     });
-    expect(() => writeStoredSettingsUpdatedAt(Date.now())).not.toThrow();
+    expect(() => writeStoredSettingsUpdatedAt(Date.now())).toThrow();
+  });
+
+  it("rejects non-finite timestamps without persisting", () => {
+    const { store } = mockLocalStorage({});
+    expect(() => writeStoredSettingsUpdatedAt(Number.NaN)).toThrow();
+    expect(store[SETTINGS_UPDATED_KEY]).toBeUndefined();
   });
 });

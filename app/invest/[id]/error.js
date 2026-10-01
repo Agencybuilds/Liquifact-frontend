@@ -26,7 +26,17 @@ const getSafeDescription = (error) => {
 
 /** @param {{ error: Error & { message?: string }, reset: () => void }} props */
 export default function InvoiceDetailError({ error, reset }) {
+  const reportedRef = useRef(new WeakSet());
+  const resettingRef = useRef(false);
+  const resettingRef = useRef(false);
+
   useEffect(() => {
+    // Dedupe reporting by error identity so repeated renders or concurrent
+    // error boundary activations do not emit duplicate logs or metrics.
+    if (!error || reportedRef.current.has(error)) {
+      return;
+    }
+    reportedRef.current.add(error);
     // Error reporting could be placed here.
     console.error(error);
   }, [error]);

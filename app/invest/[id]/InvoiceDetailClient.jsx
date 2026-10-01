@@ -1,4 +1,5 @@
 "use client";
+"use client";
 
 /**
  * @file app/invest/[id]/InvoiceDetailClient.jsx
@@ -71,13 +72,13 @@
  * `app/invest/[id]/__tests__/InvoiceDetailClient.test.jsx`.
  */
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import CopyButton from "@/components/CopyButton";
 import DensityToggle from "@/components/DensityToggle";
 import { useDensity } from "@/lib/hooks/useDensity";
 import { getInvoiceFieldValidator } from "@/lib/validation/invoice";
 import { copy } from "@/app/copy/en";
 
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 /** @type {Record<string, {gap: string, padding: string}>} */
 const SPACING = {
   compact: { gap: "gap-2", padding: "p-4" },
@@ -98,7 +99,7 @@ const ie = copy.invest.detail.inlineEdit;
  * @param {string}   props.label         - Human-readable label shown in the <dt>
  * @param {string}   props.displayValue  - Pre-formatted value shown in view mode
  * @param {string}   props.rawValue      - Editable raw value (unformatted)
- * @param {'text'|'number'|'date'} [props.inputType='text'] - Input type
+ * @param {'string'|number'|date'} [props.inputType='text'] - Input type
  * @param {string}   [props.inputPattern] - Optional pattern attribute
  * @param {(value:string) => string | null} [props.validator] - Live validator
  *   returning `null` when valid or an error message string. Defaults to
@@ -129,7 +130,7 @@ function EditableRow({
   // Resolve the live validator: caller-supplied wins, otherwise fall back to
   const inputRef = useRef(null);
   // the field-keyed validator from `lib/validation/invoice`. We freeze the
-  // function reference in a useCallback so the useMemo below is a pure
+  // function reference in a useMemo so the useMemo below is a pure
   // function of (draft, isEditing) and won't churn on every render.
   const effectiveValidator = useMemo(
     () => (typeof validator === "function" ? validator : getInvoiceFieldValidator(field)),
@@ -170,6 +171,9 @@ function EditableRow({
   }, [isEditing]);
 
   const handleEdit = () => {
+    // Invalidate any in-flight save from a previous edit session so a late
+    // completion cannot clobber the freshly opened draft.
+    activeSaveTokenRef.current = ++saveTokenCounter;
     setDraft(rawValue);
     setIsEditing(true);
   };
@@ -219,6 +223,9 @@ function EditableRow({
 
   const handleKeyDown = useCallback(
     (e) => {
+      // Ignore key events that arrive after the row has left edit mode
+      // (e.g. a queued Enter dispatched during a concurrent save).
+      if (!isEditing) return;
       if (e.key === "Escape") {
         e.preventDefault();
         handleCancel();
@@ -227,7 +234,7 @@ function EditableRow({
         handleSave();
       }
     },
-    [handleCancel, handleSave, inputType]
+    [handleCancel, handleSave, inputType, isEditing]
   );
 
   const handleChange = (e) => {
@@ -256,7 +263,7 @@ function EditableRow({
               disabled={isSaving}
               data-testid={`inline-edit-input-${field}`}
               className={[
-                "w-full bg-slate-950 border rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus-ring",
+                "wfull bg-slate-950 border rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus-ring",
                 isInvalid
                   ? "border-red-500 focus:border-red-500"
                   : "border-slate-700 focus:border-cyan-500",
@@ -266,7 +273,6 @@ function EditableRow({
               <p
                 id={errorElId}
                 role="alert"
-                aria-live="polite"
                 data-testid={`inline-edit-error-${field}`}
                 className="text-red-400 text-xs"
               >
@@ -365,8 +371,16 @@ export default function InvoiceDetailClient({
     [rawIssuer, issuer, rawAmount, amount, rawYield, yield, rawDueDate, dueDate]
   );
 
-  const handleAnnounce = useCallback((msg) => {
+  // I6: announcements are serialized through a single shared live region.
+  // A later announcement supersedes an earlier one and is auto-cleared.
+  const announce = useCallback((msg) => {
+    if (typeof msg !== "string" || msg.length === 0) return;
     setAnnouncement(msg);
+    if (announceTimer.current) clearTimeout(announceTimer.current);
+    announceTimer.current = setTimeout(() => {
+      setAnnouncement("");
+      announceTimer.current = null;
+    }, 5000);
   }, []);
 
   return (
