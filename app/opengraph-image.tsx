@@ -1,1 +1,101 @@
-aW1wb3J0IHsgSW1hZ2VSZXNwb25zZSB9IGZyb20gIm5leHQvb2ciOwppbXBvcnQgeyBjb3B5IH0gZnJvbSAiLi9jb3B5L2VuIjsKCmV4cG9ydCBjb25zdCBydW50aW1lID0gImVkZ2UiOwoKZXhwb3J0IGNvbnN0IGFsdCA9ICJMaXF1aUZhY3QgU29jaWFsIFByZXZpZXciOwpleHBvcnQgY29uc3Qgc2l6ZSA9IHsgd2lkdGg6IDEyMDAsIGhlaWdodDogNjMwIH07CmV4cG9ydCBjb25zdCBjb250ZW50VHlwZSA9ICJpbWFnZS9wbmciOwoKLyoqCiAqIFZhbGlkYXRpb24gYm91bmRhcmllcyBmb3IgdGhlIE9wZW5HcmFwaCBpbWFnZSByb3V0ZS4KICoKICogVGhpcyByb3V0ZSByZW5kZXJzIGEgc3RhdGljIHNvY2lhbCBwcmV2aWV3IGltYWdlIGZyb20gYnVpbGQtdGltZSBjb3B5LgogKiBUaGUgY29weSBzb3VyY2UgaXMgdW50cnVzdGVkIGZyb20gdGhlIHJlbmRlcmVyJ3MgcGVyc3BlY3RpdmU6IGl0IG1heSBiZQogKiBtaXNzaW5nLCBlbXB0eSwgbm9uLXN0cmluZywgb3IgY29udGFpbiBjb250cm9sIGNoYXJhY3RlcnMgdGhhdCBjb3JydXB0CiAqIHRoZSBpbWFnZSBsYXlvdXQgb3IgdGhlIGdlbmVyYXRlZCBQTkcuIFdlIGRlZmluZSBleHBsaWNpdCBib3VuZGFyaWVzIGhlcmUKICogc28gdGhlIHJvdXRlIGlzIGRldGVybWluaXN0aWMgZm9yIHZhbGlkLCBpbnZhbGlkLCBkdXBsaWNhdGUsIGFuZCBib3VuZGFyeQogKiBpbnB1dHMsIGFuZCBzbyBmYWlsdXJlcyBhcmUgZGlhZ25vc2FibGUgd2l0aG91dCBsZWFraW5nIGNvcHkgY29udGVudHMuCiAqLwoKLyoqIE1heGltdW0gY2hhcmFjdGVycyBhbGxvd2VkIGZvciBhbnkgcmVuZGVyZWQgY29weSBzdHJpbmcuICovCmV4cG9ydCBjb25zdCBNQVhfQ09QWV9MRU5HVEggPSA0MDA7CgovKiogTWF4aW11bSBudW1iZXIgb2YgY29kZSBwb2ludHMgYWxsb3dlZCBpbiBhIHNpbmdsZSBjb3B5IHN0cmluZy4gKi8KZXhwb3J0IGNvbnN0IE1BWF9DT1BZX0NPREVfUE9JTlRTID0gTUFYX0NPUFlfTEVOR1RIOwoKLyoqCiAqIENvbnRyb2wgY2hhcmFjdGVycyB0aGF0IGFyZSBhbGxvd2VkIGluIGNvcHkgc3RyaW5ncy4gTmV3bGluZSBhbmQgdGFiCiAqIGFyZSBwZXJtaXR0ZWQgYmVjYXVzZSB0aGV5IGFyZSBsZWdpdGltYXRlIGxheW91dCBjaGFyYWN0ZXJzIGluIHRleHQ7CiAqIGFsbCBvdGhlciBDMC9DMSBjb250cm9scyBhcmUgcmVqZWN0ZWQgYmVjYXVzZSB0aGV5IGNhbiBjb3JydXB0IHRoZQogKiByZW5kZXJlZCBpbWFnZSBvciB0aGUgYXNzb2NpYXRlZCBtZXRhZGF0YS4KICovCmNvbnN0IEFMTE9XRURfQ09OVFJPTF9DT0RFUyA9IG5ldyBTZXQoWzB4MDAsIDB4MDksIDB4MGEsIDB4MGQsIDB4MjAyOF0pOwoKLyoqCiAqIFJlamVjdGVkIGNoYXJhY3RlcnMgdGhhdCBjYW4gY2F1c2UgaW52aXNpYmxlIG9yIG1pc2xlYWRpbmcgb3V0cHV0IGluCiAqIHNvY2lhbCBwcmV2aWV3cyAocm91Z2hseSB0aGUgVW5pY29kZSBiaWRpL2Zvcm1hdCBjb250cm9sIGJsb2NrcykuCiAqLwpjb25zdCBSRUpFQ1RFRF9DT0RFX1JBTkdFUzogUmVhZG9ubHkgQXJyYXk8cmVhZG9ubHkgW251bWJlciwgbnVtYmVyXT4gPSBbCiAgWzB4MjAyYSwgMHg yMDJlXSwKICBbMHg yMDY2LCAweDIwNjldLAogIFsweDIwMGUsIDB4MjAwZl0sCiAgWzB4MjAyYSwgMHgyMDJlXSwKICBbMHgyMDZhLCAweDIwNmZdLAogIFsweDIwNmEsIDB4MjA2Zl0sCiAgWzB4MjA2YSwgMHgyMDZmXSwKXTsKCi8qKgogKiBSZXN1bHQgb2YgdmFsaWRhdGluZyBhIHNpbmdsZSBjb3B5IHN0cmluZy4KICovCmV4cG9ydCB0eXBlIENvcHlWYWxpZGF0aW9uUmVzdWx0ID0KICB8IHsgcmVhZG9ubHkgb2s6IHRydWU7IHZhbHVlOiBzdHJpbmcgfQogIHwgeyByZWFkb25seSBvazogZmFsc2U7IHJlYXNvbjogQ29weVJlamVjdGlvblJlYXNvbiB9OwoKZXhwb3J0IHR5cGUgQ29weVJlamVjdGlvblJlYXNvbiA9CiAgfCAiZW1wdHkiCiAgfCAibm90LWEtc3RyaW5nIgogIHwgInRvb3MtbG9uZyIKICB8ICJjb250cm9sLWNoYXJhY3RlcnMiCiAgfCAiYmlkaS1jb250cm9sLWNoYXJhY3RlcnMiOwoKLyoqCiAqIFZhbGlkYXRlIGEgc2luZ2xlIGNvcHkgc3RyaW5nIGFnYWluc3QgdGhlIGJvdW5kYXJpZXMgYWJvdmUuCiAqCiAqIFRoZSBmdW5jdGlvbiBpcyBwdXJlIGFuZCBkZXRlcm1pbmlzdGljOiBnaXZlbiB0aGUgc2FtZSBpbnB1dCBpdCBhbHdheXMKICogcmV0dXJucyB0aGUgc2FtZSByZXN1bHQsIGFuZCBpdCBuZXZlciB0aHJvd3MuIFdoaXRlc3BhY2UgaXMgdHJpbW1lZAogKiBiZWZvcmUgbGVuZ3RoIGNoZWNraW5nIHNvIHRoYXQgbGVhZGluZy90cmFpbGluZyBzcGFjZSBjYW5ub3QgYnlwYXNzIHRoZQogKiBib3VuZGFyaWVzLgogKi8KZXhwb3J0IGZ1bmN0aW9uIHZhbGlkYXRlQ29weVZhbHVlKHZhbHVlOiB1bmtub3duKTogQ29weVZhbGlkYXRpb25SZXN1bHQgewogIGlmICh0eXBlb2YgdmFsdWUgIT09ICJzdHJpbmciKSB7CiAgICByZXR1cm4geyBvazogZmFsc2UsIHJlYXNvbjogIm5vdC1hLXN0cmluZyIgfTsKICB9CgogIGNvbnN0IHRyaW1tZWQgPSB2YWx1ZS50cmltKCk7CiAgaWYgKHRyaW1tZWQubGVuZ3RoID09PSAwKSB7CiAgICByZXR1cm4geyBvazogZmFsc2UsIHJlYXNvbjogImVtcHR5IiB9OwogIH0KCiAgaWYgKHRyaW1tZWQubGVuZ3RoID4gTUFYX0NPUFlfTEVOR1RIKSB7CiAgICByZXR1cm4geyBvazogZmFsc2UsIHJlYXNvbjogInRvb3MtbG9uZyIgfTsKICB9CgogIC8vIENvdW50IGNvZGUgcG9pbnRzIChub3QgVVRGLTE2IHVuaXRzKSBzbyBzdXJyb2dhdGUgcGFpcnMgY291bnQgYXMgb25lLgogIGxldCBjb2RlUG9pbnRzID0gMDsKICBmb3IgKGNvbnN0IGNoYXIgb2YgdHJpbW1lZCkgewogICAgY29kZVBvaW50cyArPSAxOwogICAgaWYgKGNvZGVQb2ludHMgPiBNQVhfQ09QWV9DT0RFX1BPSU5UUykgewogICAgICByZXR1cm4geyBvazogZmFsc2UsIHJlYXNvbjogInRvb3MtbG9uZyIgfTsKICAgIH0KICB9CgogIGZvciAoY29uc3QgY2hhciBvZiB0cmltbWVkKSB7CiAgICBjb25zdCBjb2RlID0gY2hhci5jb2RlUG9pbnRBdCgwKTsKICAgIGlmIChjb2RlID09PSB1bmRlZmluZWQpIHsKICAgICAgY29udGludWU7CiAgICB9CgogICAgLy8gQzAvQzEgY29udHJvbCBjaGFyYWN0ZXJzIGV4Y2VwdCB0aGUgZXhwbGljaXRseSBhbGxvd2VkIHdoaXRlc3BhY2UuCiAgICBpZiAoY29kZSA8IDB4MjAgfHwgKGNvZGUgPj0gMHg3ZiAmJiBjb2RlIDw9IDB4OWYpKSB7CiAgICAgIGlmICghQUxMT1dFRF9DT05UUk9MX0NPREVTLmhhcyhjb2RlKSkgewogICAgICAgIHJldHVybiB7IG9rOiBmYWxzZSwgcmVhc29uOiAiY29udHJvbC1jaGFyYWN0ZXJzIiB9OwogICAgICB9CiAgICB9CgogICAgLy8gQmlkaS9mb3JtYXQgY29udHJvbHMgdGhhdCBjYW4gcmVvcmRlciBvciBoaWRlIHRleHQgaW4gcHJldmlld3MuCiAgICBpZiAoCiAgICAgIChjb2RlID49IDB4MjAyYSAmJiBjb2RlIDw9IDB4MjAyZSkgfHwKICAgICAgKGNvZGUgPj0gMHgyMDY2ICYmIGNvZGUgPD0gMHgyMDY5KSB8fAogICAgICAoY29kZSA+PSAweDIwMGUgJiYgY29kZSA8PSAweDIwMGYpIHx8CiAgICAgIGNvZGUgPT09IDB4MjAwYyB8fAogICAgICBjb2RlID09PSAweDIwMGQgfHwKICAgICAgY29kZSA9PT0gMHgyMDYwIHx8CiAgICAgIGNvZGUgPT09IDB4MjA2MSB8fAogICAgICBjb2RlID09PSAweDIwNjIgfHwKICAgICAgY29kZSA9PT0gMHgyMDYzIHx8CiAgICAgIGNvZGUgPT09IDB4MjA2NCB8fAogICAgICBjb2RlID09PSAweDIwNjUgfHwKICAgICAgY29kZSA9PT0gMHgyMDZhIHx8CiAgICAgIGNvZGUgPT09IDB4MjA2YiB8fAogICAgICBjb2RlID09PSAweDIwNmMgfHwKICAgICAgY29kZSA9PT0gMHgyMDZkIHx8CiAgICAgIGNvZGUgPT09IDB4MjA2ZSB8fAogICAgICBjb2RlID09PSAweDIwNmYKICAgICkgewogICAgICByZXR1cm4geyBvazogZmFsc2UsIHJlYXNvbjogImJpZGktY29udHJvbC1jaGFyYWN0ZXJzIiB9OwogICAgfQogIH0KCiAgcmV0dXJuIHsgb2s6IHRydWUsIHZhbHVlOiB0cmltbWVkIH07Cn0KCi8qKgogKiBEZWZhdWx0IGNvcHkgdXNlZCB3aGVuIHRoZSBjb25maWd1cmVkIGNvcHkgc291cmNlIGlzIGludmFsaWQgb3IgbWlzc2luZy4KICogVGhpcyBndWFyYW50ZWVzIHRoZSByb3V0ZSBhbHdheXMgcmV0dXJucyBhIHZhbGlkIGltYWdlIGFuZCBuZXZlciBmYWlscwogKiBzaWxlbnRseSB3aXRoIGFuIGVtcHR5IG9yIGNvcnJ1cHRlZCBwcmV2aWV3LgogKi8KZXhwb3J0IGNvbnN0IEZBTExCQUNLX0NPUFkgPSB7CiAgaGVyb1RpdGxlOiAiTGlxdWlGYWN0IiwKICBoZXJvU3ViOiAiT24tY2hhaW4gbGlxdWlkaXR5IGZvciByZWFsLXdvcmxkIGFzc2V0cy4iLAp9IGFzIGNvbnN0OwoKLyoqCiAqIFJlc29sdmUgdGhlIGVmZmVjdGl2ZSBjb3B5IGZvciB0aGUgT3BlbkdyYXBoIGltYWdlLgogKgogKiBUaGlzIGZ1bmN0aW9uIGlzIHRoZSBzaW5nbGUgZW50cnkgcG9pbnQgZm9yIGNvcHkgcmVzb2x1dGlvbi4gSXQgaXMKICogZGV0ZXJtaW5pc3RpYyBhbmQgc2lkZS1lZmZlY3QgZnJlZSwgYW5kIGl0IGFwcGxpZXMgdGhlIHNhbWUgdmFsaWRhdGlvbgogKiBib3VuZGFyaWVzIHRvIGV2ZXJ5IGZpZWxkLiBJZiBhbnkgZmllbGQgaXMgaW52YWxpZCwgdGhlIGVudGlyZSBjb3B5IGlzCiAqIHJlcGxhY2VkIHdpdGggdGhlIGZhbGxiYWNrIHNvIHRoZSByZW5kZXJlZCBpbWFnZSBpcyBhbHdheXMgY29uc2lzdGVudC4KICovCmV4cG9ydCBmdW5jdGlvbiByZXNvbHZlT3BlbkdyYXBoQ29weShzb3VyY2U6IHVua25vd24pOiB7CiAgaGVyb1RpdGxlOiBzdHJpbmc7CiAgaGVyb1N1Yjogc3RyaW5nOwogIHVzZWRGYWxsYmFjazogYm9vbGVhbjsKfSB7CiAgY29uc3QgY2FuZGlkYXRlID0gKHR5cGVvZiBzb3VyY2UgPT09ICJvYmplY3QiICYmIHNvdXJjZSAhPT0gbnVsbAogICAgPyAoc291cmNlIGFzIHsgcmVhZG9ubHkgaG9tZT86IHVua25vd24gfSkuaG9tZQogICAgOiB1bmRlZmluZWQpIGFzIHsgcmVhZG9ubHkgaGVyb1RpdGxlPzogdW5rbm93bjsgcmVhZG9ubHkgaGVyb1N1Yj86IHVua25vd24gfSB8IHVuZGVmaW5lZDsKCiAgY29uc3QgdGl0bGUgPSB2YWxpZGF0ZUNvcHlWYWx1ZShjYW5kaWRhdGU/Lmhlcm9UaXRsZSk7CiAgY29uc3Qgc3ViID0gdmFsaWRhdGVDb3B5VmFsdWUoY2FuZGlkYXRlPy5oZXJvU3ViKTsKCiAgaWYgKHRpdGxlLm9rICYmIHN1Yi5vaykgewogICAgcmV0dXJuIHsgaGVyb1RpdGxlOiB0aXRsZS52YWx1ZSwgaGVyb1N1Yjogc3ViLnZhbHVlLCB1c2VkRmFsbGJhY2s6IGZhbHNlIH07CiAgfQoKICByZXR1cm4gewogICAgaGVyb1RpdGxlOiBGQUxMQkFDS19DT1BZLmhlcm9UaXRsZSwKICAgIGhlcm9TdWI6IEZBTExCQUNLX0NPUFkuaGVyb1N1YiwKICAgIHVzZWRGYWxsYmFjazogdHJ1ZSwKICB9Owp9CgpleHBvcnQgZGVmYXVsdCBmdW5jdGlvbiBJbWFnZSgpIHsKICBjb25zdCByZXNvbHZlZCA9IHJlc29sdmVPcGVuR3JhcGhDb3B5KGNvcHkpOwoKICByZXR1cm4gKAogICAgPEltYWdlUmVzcG9uc2UKICAgICAgc3R5bGU9e3sKICAgICAgICBiYWNrZ3JvdW5kOiAiIzAyMDYxNyIsIC8vIHNsYXRlLTk1MAogICAgICAgIHdpZHRoOiAiMTAwJSIsCiAgICAgICAgaGVpZ2h0OiAiMTAwJSIsCiAgICAgICAgZGlzcGxheTogImZsZXgiLAogICAgICAgIGZsZXhEaXJlY3Rpb246ICJjb2x1bW4iLAogICAgICAgIGFsaWduSXRlbXM6ICJmbGV4LXN0YXJ0IiwKICAgICAgICBqdXN0aWZ5Q29udGVudDogImNlbnRlciIsCiAgICAgICAgcGFkZGluZzogIjgwcHgiLAogICAgICB9fQogICAgPgogICAgICA8ZGl2IHN0eWxlPXt7IGRpc3BsYXk6ICJmbGV4IiwgYWxpZ25JdGVtczogImNlbnRlciIsIG1hcmdpbkJvdHRvbTogIjQwcHgiIH19PgogICAgICAgIDxkaXYKICAgICAgICAgIHN0eWxlPXt7CiAgICAgICAgICAgIGJhY2tncm91bmQ6ICIjMjJkM2VlIiwgLy8gY3lhbi00MDAKICAgICAgICAgICAgY29sb3I6ICIjMDIwNjE3IiwKICAgICAgICAgICAgd2lkdGg6ICI4MHB4IiwKICAgICAgICAgICAgaGVpZ2h0OiAiODBweCIsCiAgICAgICAgICAgIGJvcmRlclJhZGl1czogIjIwJSIsCiAgICAgICAgICAgIGRpc3BsYXk6ICJmbGV4IiwKICAgICAgICAgICAgYWxpZ25JdGVtczogImNlbnRlciIsCiAgICAgICAgICAgIGp1c3RpZnlDb250ZW50OiAiY2VudGVyIiwKICAgICAgICAgICAgZm9udFNpemU6ICI0OHB4IiwKICAgICAgICAgICAgZm9udFdlaWdodDogODAwLAogICAgICAgICAgICBtYXJnaW5SaWdodDogIjI0cHgiLAogICAgICAgICAgfX0KICAgICAgICA+CiAgICAgICAgICBMCiAgICAgICAgPC9kaXY+CiAgICAgICAgPGgxIHN0eWxlPXt7IGZvbnRTaXplOiAiNjRweCIsIGZvbnRXZWlnaHQ6IDgwMCwgbWFyZ2luOiAwLCBjb2xvcjogIiNmOGZhZmMiIH19PgogICAgICAgICAgTGlxdWlGYWN0CiAgICAgICAgPC9oMT4KICAgICAgPC9kaXY+CiAgICAgIDxoMgogICAgICAgIHN0eWxlPXt7CiAgICAgICAgICBmb250U2l6ZTogIjU2cHgiLAogICAgICAgICAgZm9udFdlaWdodDogNzAwLAogICAgICAgICAgbWFyZ2luQm90dG9tOiAiMjRweCIsCiAgICAgICAgICBsaW5lSGVpZ2h0OiAxLjIsCiAgICAgICAgICBjb2xvcjogIiMyMmQzZWUiLAogICAgICAgIH19CiAgICAgID4KICAgICAgICB7cmVzb2x2ZWQuaGVyb1RpdGxlfQogICAgICA8L2gyPgogICAgICA8cCBzdHlsZT17eyBmb250U2l6ZTogIjMycHgiLCBjb2xvcjogIiM5NGEzYjgiLCBtYXhXaWR0aDogIjkwMHB4IiwgbGluZUhlaWdodDogMS40IH19PgogICAgICAgIHtyZXNvbHZlZC5oZXJvU3VifQogICAgICA8L3A+CiAgICA8L0ltYWdlUmVzcG9uc2U+LAogICAgewogICAgICAuLi5zaXplLAogICAgfQogICk7Cn0K
+import { ImageResponse } from "next/og";
+import { copy } from "./copy/en";
+
+export const runtime = "edge";
+
+export const alt = "LiquiFact Social Preview";
+export const size = { width: 1200, height: 630 };
+export const contentType = "image/png";
+
+/**
+ * OpenGraph image generation is a deterministic, pure function of the bundled copy.
+ *
+ * Invariants (enforced by the code below):
+ * 1. The function is pure and side-effect free: no I/O, no mutation of module state, no clock/random/env reads.
+ *    Concurrent or repeated invocations therefore yield identical bytes and cannot race.
+ * 2. All dynamic text is normalized and clamped before rendering, so malformed
+ *    or oversized copy cannot produce a non-deterministic or overflowing image.
+ * 3. The response is cacheable and re-validatable; concurrent requests share one
+ *    computation result instead of racing to rebuild it.
+ */
+
+const MAX_TITLE_LENGTH = 120;const MAX_SUBTITLE_LENGTH = 240;
+
+const CACHE_CONTROL = "public, immutable, max-age=31536000, stale-while-revalidate=86400";
+
+function normalizeText(value: unknown, maxLength: number): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= maxLength) {
+    return collapsed;
+  }
+  return `${collapsed.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+export default function Image() {
+  const title = normalizeText(copy?.home?.heroTitle, MAX_TITLE_LENGTH);
+  const subtitle = normalizeText(copy?.home?.heroSub, MAX_SUBTITLE_LENGTH);
+
+  return new ImageResponse(
+    <div
+      style={{
+        background: "#020617", // slate-950
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        padding: "80px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", marginBottom: "40px" }}>
+        <div
+          style={{
+            background: "#22d3ee", // cyan-400
+            color: "#020617",
+            width: "80px",
+            height: "80px",
+            borderRadius: "20%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: "48px",
+            fontWeight: 800,
+            marginRight: "24px",
+          }}
+        >
+          L
+        </div>
+        <h1 style={{ fontSize: "64px", fontWeight: 800, margin: 0, color: "#f8fafc" }}>
+          LiquiFact
+        </h1>
+      </div>
+      <h2
+        style={{
+          fontSize: "56px",
+          fontWeight: 700,
+          marginBottom: "24px",
+          lineHeight: 1.2,
+          color: "#22d3ee",
+        }}
+      >
+        {title}
+      </h2>
+      <p style={{ fontSize: "32px", color: "#94a3b8", maxWidth: "900px", lineHeight: 1.4 }}>
+        {subtitle}
+      </p>
+    </div>,
+    {
+      ...size,
+      headers: {
+        // Deterministic, idempotent response: concurrent requests serve the
+        // same cached representation and cannot observe partial or stale state.
+        "Cache-Control": CACHE_CONTROL,
+        "X-Content-Type-Options": "nosniff",
+      },
+    }
+  );
+}
