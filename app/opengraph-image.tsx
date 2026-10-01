@@ -1,13 +1,32 @@
 import { ImageResponse } from "next/og";
 import { copy } from "./copy/en";
+import { reportError } from "../lib/observability/reportError";
 
 export const runtime = "edge";
 
 export const alt = "LiquiFact Social Preview";
-export const size = { width: 1200, height: 630 };
+export const size = { width: 1200, height: 630 } as const;
 export const contentType = "image/png";
 
-export default function Image() {
+/**
+ * Deterministic failure recovery for the social preview image.
+ *
+ * Invariants:
+ * -  The route always returns a valid PNG image response or throws a
+ *    deterministic error that is reported through the observability sink.
+ * -  A failure in the primary render path falls back to a minimal, static
+ *    render that does not depend on external copy or font resolution.
+ * -  The fallback is itself guarded, so a failure in the fallback is logged
+ *    and surfaced as a controlled error rather than a silent empty response.
+ * -  Rendering is pure and has no mutable module-level state, so concurrent
+ *    invocations cannot interfere with each other.
+ */
+
+type Renderer = () => Response;
+
+const FALLBACK_CONTEXT = { route: "/opengraph-image", operation: "render" } as const;
+
+function renderPrimary(): Response {
   return new ImageResponse(
     <div
       style={{
@@ -19,7 +38,7 @@ export default function Image() {
         alignItems: "flex-start",
         justifyContent: "center",
         padding: "80px",
-      }}
+      },
     >
       <div style={{ display: "flex", alignItems: "center", marginBottom: "40px" }}>
         <div
@@ -52,14 +71,59 @@ export default function Image() {
           color: "#22d3ee",
         }}
       >
-        {copy.home.heroTitle}
+        {title}
       </h2>
       <p style={{ fontSize: "32px", color: "#94a3b8", maxWidth: "900px", lineHeight: 1.4 }}>
-        {copy.home.heroSub}
+        {subtitle}
       </p>
+    </div>
+  );
+}
+
+function renderFallback(): Response {
+  return new ImageResponse(
+    <div
+      style={{
+        background: "#020617",
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "#f8fafc",
+        fontSize: "72px",
+        fontWeight: 800,
+      }}
+    >
+      LiquiFact
     </div>,
     {
       ...size,
     }
   );
+}
+
+/**
+ * Runs a renderer with a deterministic fallback. The first failure is
+ * reported with scrubbed context, then the fallback is attempted. If the
+ * fallback also fails, the error is reported and re-thrown so the route
+ * fails visibly instead of serving a corrupt or empty image.
+ */
+function renderWithRecovery(primary: Renderer, fallback: Renderer): Response {
+  try {
+    return primary();
+  } catch (error) {
+    reportError(error, { ...FALLBACK_CONTEXT, phase: "primary" });
+  }
+
+  try {
+    return fallback();
+  } catch (fallbackError) {
+    reportError(fallbackError, { ...FALLBACK_CONTEXT, phase: "fallback" });
+    throw fallbackError;
+  }
+}
+
+export default function Image() {
+  return renderWithRecovery(renderPrimary, renderFallback);
 }
