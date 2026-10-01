@@ -12,7 +12,7 @@
  * @property {string} home.apiStatus
  * @property {string} home.checkApiHealth
  * @property {string} home.checking
- * @property {{ connected: string, degraded: string, unreachable: string, rawResponse: string }} home.healthStatus
+ * @property {{connected: string, degraded: string, unreachable: string, rawResponse: string}} home.healthStatus
  * @property {Object} invest - Invest page copy
  * @property {string} invest.title
  * @property {string} invest.subtext
@@ -244,75 +244,27 @@
  * @property {string} invoiceTimeline.statusCompleted
  * @property {string} invoiceTimeline.statusCurrent
  * @property {string} invoiceTimeline.statusPending
- * @property {Object} settings - Settings page copy
- * @property {string} settings.pageTitle
- * @property {string} settings.pageSub
- * @property {string} settings.editAction
- * @property {string} settings.editActionLabel
- * @property {string} settings.saveAction
- * @property {string} settings.saveActionLabel
- * @property {string} settings.cancelAction
- * @property {string} settings.cancelActionLabel
- * @property {string} settings.emptyValue
- * @property {string} settings.savedAnnouncement
- * @property {string} settings.cancelledAnnouncement
- * @property {string} settings.invalidAnnouncement
- * @property {Object} settings.fields - Field-level copy
- * @property {string} settings.fields.displayName.label
- * @property {string} settings.fields.displayName.description
- * @property {string} settings.fields.displayName.placeholder
- * @property {string} settings.fields.email.label
- * @property {string} settings.fields.email.description
- * @property {string} settings.fields.email.placeholder
- * @property {Object} settings.errors - Validation error messages
- * @property {string} settings.errors.required
- * @property {string} settings.errors.displayNameTooShort
- * @property {string} settings.errors.displayNameTooLong
- * @property {string} settings.errors.emailTooLong
- * @property {string} settings.errors.invalidEmail
- * @property {string} settings.copyIdentifier
- * @property {string} settings.toastCopySuccessMsg
- * @property {string} settings.toastCopySuccessTitle
- * @property {string} settings.toastCopyErrorMsg
- * @property {string} settings.toastCopyErrorTitle
- * @property {string} settings.errorStatus
- * @property {string} settings.loadStatus
- * @property {string} settings.showStatus
- * @property {string} settings.noMatch
- * @property {string} settings.empty
- * @property {string} settings.loadMore
- * @property {string} settings.densityLabel
- * @property {string} settings.densityDescription
- * @property {string} settings.exportGroupLabel
- * @property {string} settings.exportCSVLabel
- * @property {string} settings.exportJSONLabel
- * @property {string} settings.exportAnnounceCSV
- * @property {string} settings.exportAnnounceJSON
- * @property {string} settings.exportEmpty
- */
+ * @property {Object} setting
+*/
 
-/** @type {CopyDictionary} */
-export const copy = {
+const copy = {
   home: {
-    heroTitle: "Global Invoice Liquidity Network on Stellar",
-    heroSub:
-      "Unlock liquidity from unpaid invoices instantly. SMEs get working capital; investors earn yield. Tokenized invoices, escrow on Soroban.",
-    boxBusinessTitle: "For Businesses",
-    boxBusinessSub: "Upload invoices, get instant stablecoin liquidity.",
-    boxBusinessAriaLabel:
-      "For Businesses \u2013 upload invoices and get instant stablecoin liquidity",
-    boxInvestTitle: "For Investors",
-    boxInvestSub: "Fund tokenized invoices and earn yield at maturity.",
-    boxInvestAriaLabel: "For Investors \u2013 fund tokenized invoices and earn yield at maturity",
-    apiStatus: "API status",
-    checkApiHealth: "Check backend health",
-    checking: "Checking\u2026",
-    // Health status states - maps to getHealth return values
+    heroTitle: 'Liquifact',
+    heroSub: 'Invoice financing for modern businesses',
+    boxBusinessTitle: 'For businesses',
+    boxBusinessSub: 'Upload and tokenize your invoices',
+    boxBusinessAriaLabel: 'Learn more about business invoice financing',
+    boxInvestTitle: 'For investors',
+    boxInvestSub: 'Fund invoices and earn yield',
+    boxInvestAriaLabel: 'Learn more about investing in invoices',
+    apiStatus: 'API status',
+    checkApiHealth: 'Check API health',
+    checking: 'Checking...',
     healthStatus: {
-      connected: "Connected",
-      degraded: "Degraded",
-      unreachable: "Unreachable",
-      rawResponse: "Raw response",
+      connected: 'Connected',
+      degraded: 'Degraded',
+      unreachable: 'Unreachable',
+      rawResponse: 'Raw response',
     },
   },
   invest: {
@@ -757,3 +709,6 @@ export const copy = {
     byActor: "By {actor}",
   },
 };
+
+export default copy;
+export { copy };

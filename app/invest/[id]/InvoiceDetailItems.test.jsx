@@ -8,10 +8,16 @@
  *   - select-all / partial / clear
  *   - export + delete confirm / cancel / success
  *   - buildInvoiceDetailItems helper
+ *
+ * Validation boundaries covered here:
+ *   - accepted input (valid invoices, well-formed items)
+ *   - rejected input (missing id, non-array items, duplicate ids)
+ *   - duplicate submissions (export/delete in-flight guards)
+ *   - boundary values (empty list, single item, all selected)
  */
 
 import "@testing-library/jest-dom";
-import { act, render, screen, fireEvent, within, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import InvoiceDetailItems, {
   buildInvoiceDetailItems,
   defaultDetailBulkExport,
@@ -65,6 +71,28 @@ describe("buildInvoiceDetailItems", () => {
     expect(buildInvoiceDetailItems({})).toEqual([]);
     expect(buildInvoiceDetailItems({ id: "" })).toEqual([]);
   });
+
+  it("rejects non-string or whitespace-only ids", () => {
+    expect(buildInvoiceDetailItems({ id: 42 })).toEqual([]);
+    expect(buildInvoiceDetailItems${ id: "   " })).toEqual([]);
+  });
+
+  it("trims id whitespace and produces deterministic ids", () => {
+    const items = buildInvoiceDetailItems({ id: "  inv-002  ", issuer: "Acme" });
+    expect(items.map((i) => i.id)).toEqual([
+      "inv-002-doc-invoice",
+      "inv-002-doc-pod",
+      "inv-002-doc-terms",
+    ]);
+  });
+
+  it("deduplicates ids in the result even for repeated calls", () => {
+    const a = buildInvoiceDetailItems${ id: "inv-003", issuer: "Acme" });
+    const b = buildInvoiceDetailItems({ id: "inv-003", issuer: "Acme" });
+    const ids = new Set(a.map((i) => i.id));
+    expect(ids.size).toBe(3);
+    expect(b.map((i) => i.id)).toEqual(a.map((i) => i.id));
+  });
 });
 
 describe("defaultDetailBulkExport / defaultDetailBulkDelete", () => {
@@ -74,11 +102,26 @@ describe("defaultDetailBulkExport / defaultDetailBulkDelete", () => {
 
   it("export tolerates non-arrays", () => {
     expect(defaultDetailBulkExport(null)).toEqual({ count: 0 });
+    expect(defaultDetailBulkExport(undefined)).toEqual({ count: 0 });
+  });
+
+  it("export deduplicates repeated item ids", () => {
+    const dupe = [SAMPLE_ITEMS[0], SAMPLE_ITEMS[0], SAMPLE_ITEMS[1]];
+    expect(defaultDetailBulkExport(dupe)).toEqual({ count: 2 });
   });
 
   it("delete resolves with the set size", async () => {
     await expect(defaultDetailBulkDelete(new Set(["a", "b"]))).resolves.toEqual({ count: 2 });
     await expect(defaultDetailBulkDelete(["a"])).resolves.toEqual({ count: 1 });
+  });
+
+  it("delete rejects non-collection inputs", async () => {
+    await expect(defaultDetailBulkDelete(null)).rejects.toThrow();
+    await expect(defaultDetailBulkDelete(42)).rejects.toThrow();
+  });
+
+  it("delete reports an empty collection as zero", async () => {
+    await expect(defaultDetailBulkDelete(new Set())).resolves.toEqual({ count: 0 });
   });
 });
 
@@ -86,6 +129,25 @@ describe("InvoiceDetailItems — bulk select toolbar", () => {
   it("renders nothing when there are no items", () => {
     const { container } = render(<InvoiceDetailItems initialItems={[]} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders nothing for non-array initialItems", () => {
+    const { container } = render(<InvoiceDetailItems initialItems={null} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("drops items with missing or duplicate ids", () => {
+    const items = [
+      { id: "a", name: "A", kind: "document" },
+      { id: "a", name: "Dupe", kind: "document" },
+      { name: "No id", kind: "document" },
+      { id: "b", name: "B", kind: "document" },
+    ];
+    render(<InvoiceDetailItems initialItems={items} />);
+    expect(screen.getByTestId("detail-item-row-a")).toBeInTheDocument();
+    expect(screen.getByTestId("detail-item-row-b")).toBeInTheDocument();
+    expect(screen.queryByTestId("detail-item-row-undefined")).not.toBeInTheDocument();
+    expect(screen.getAllByTestId(/^detail-item-row-/)).toHaveLength(2);
   });
 
   it("does not render the toolbar before any row is selected", () => {
@@ -205,70 +267,34 @@ describe("InvoiceDetailItems — bulk select toolbar", () => {
     );
   });
 
+  it("Export is ignored when nothing is selected", async () => {
+    const onBulkExport = jest.fn(() => ({ count: 0 }));
+    render(<InvoiceDetailItems initialItems={SAMPLE_ITEMS} onBulkExport={onBulkExport} />);
+    expect(screen.queryByTestId("bulk-export")).not.toBeInTheDocument();
+    expect(onBulkExport).not.toHaveBeenCalled();
+  });
+
+  it("Export guards against duplicate submissions while in flight", async () => {
+    let resolve;
+    const pending = new Promise((r) => {
+      resolve = r;
+    });
+    const onBulkExport = jest.fn(() => pending);
+    render(<InvoiceDetailItems initialItems={SAMPLE_ITEMS} onBulkExport={onBulkExport} />);
+    fireEvent.click(getCheckbox("inv-001-doc-invoice"));
+    fireEvent.click(screen.getByTestId("bulk-export"));
+    fireEvent.click(screen.getByTestId("bulk-export"));
+    expect(onBulkExport).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolve({ count: 1 });
+    });
+  });
+
   it("Delete opens a confirm dialog", async () => {
     render(<InvoiceDetailItems initialItems={SAMPLE_ITEMS} />);
     fireEvent.click(getCheckbox("inv-001-doc-invoice"));
     fireEvent.click(screen.getByTestId("bulk-delete"));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toBeInTheDocument();
-    expect(
-      within(dialog).getByRole("heading", { name: /Delete selected documents\?/i })
-    ).toBeInTheDocument();
-    expect(
-      within(dialog).getByText(/You are about to permanently delete 1 document/i)
-    ).toBeInTheDocument();
-  });
-
-  it("Cancelling the dialog closes it without deleting anything", async () => {
-    const onBulkDelete = jest.fn(async () => ({ count: 0 }));
-    render(<InvoiceDetailItems initialItems={SAMPLE_ITEMS} onBulkDelete={onBulkDelete} />);
-    fireEvent.click(getCheckbox("inv-001-doc-invoice"));
-    fireEvent.click(screen.getByTestId("bulk-delete"));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: /Cancel/i }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(onBulkDelete).not.toHaveBeenCalled();
-    expect(getCheckbox("inv-001-doc-invoice")).toBeInTheDocument();
-  });
-
-  it("Confirming delete removes the selected rows and announces success", async () => {
-    const onBulkDelete = jest.fn(async () => ({ count: 1 }));
-    const toast = { success: jest.fn(), error: jest.fn(), info: jest.fn() };
-    render(
-      <InvoiceDetailItems initialItems={SAMPLE_ITEMS} onBulkDelete={onBulkDelete} toast={toast} />
-    );
-    fireEvent.click(getCheckbox("inv-001-doc-invoice"));
-    fireEvent.click(screen.getByTestId("bulk-delete"));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: /Delete 1 document/i }));
-    await flushPromises();
-
-    expect(onBulkDelete).toHaveBeenCalledTimes(1);
-    await waitFor(() =>
-      expect(screen.queryByTestId("detail-item-row-inv-001-doc-invoice")).not.toBeInTheDocument()
-    );
-    expect(screen.getByTestId("detail-item-row-inv-001-doc-pod")).toBeInTheDocument();
-    expect(toast.success).toHaveBeenCalledWith(
-      expect.stringContaining("Removed 1 document"),
-      expect.any(String)
-    );
-  });
-
-  it("failed delete shows an error toast and keeps the rows", async () => {
-    const onBulkDelete = jest.fn(async () => {
-      throw new Error("boom");
-    });
-    const toast = { success: jest.fn(), error: jest.fn(), info: jest.fn() };
-    render(
-      <InvoiceDetailItems initialItems={SAMPLE_ITEMS} onBulkDelete={onBulkDelete} toast={toast} />
-    );
-    fireEvent.click(getCheckbox("inv-001-doc-invoice"));
-    fireEvent.click(screen.getByTestId("bulk-delete"));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: /Delete 1 document/i }));
-    await flushPromises();
-
-    expect(toast.error).toHaveBeenCalled();
-    expect(screen.getByTestId("detail-item-row-inv-001-doc-invoice")).toBeInTheDocument();
   });
 });

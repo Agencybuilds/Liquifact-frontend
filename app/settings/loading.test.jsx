@@ -513,4 +513,72 @@ describe("SettingsLoading", () => {
       consoleErrorSpy.mockRestore();
     });
   });
+
+  describe("Compatibility Contracts & Edge Cases", () => {
+    it("safely handles nullish and primitive inputs to component function", () => {
+      expect(() => render(SettingsLoading(null))).not.toThrow();
+      expect(() => render(SettingsLoading(undefined))).not.toThrow();
+      expect(() => render(SettingsLoading(42))).not.toThrow();
+      expect(() => render(SettingsLoading("invalid-string"))).not.toThrow();
+      expect(() => render(SettingsLoading([]))).not.toThrow();
+    });
+
+    it("merges custom className without displacing base layout classes", () => {
+      render(<SettingsLoading className="custom-wrapper-class extra-padding" />);
+      const root = screen.getByTestId("settings-loading");
+      expect(root).toHaveClass(
+        "min-h-screen",
+        "bg-slate-950",
+        "custom-wrapper-class",
+        "extra-padding"
+      );
+    });
+
+    it("allows overriding isBusy to false while preserving ARIA semantics", () => {
+      render(<SettingsLoading isBusy={false} />);
+      const root = screen.getByTestId("settings-loading");
+      expect(root).toHaveAttribute("aria-busy", "false");
+      expect(screen.getByTestId("theme-skeleton")).toHaveAttribute("aria-busy", "false");
+    });
+
+    it("allows custom data-testid while falling back to default", () => {
+      render(<SettingsLoading data-testid="custom-settings-loader" />);
+      expect(screen.getByTestId("custom-settings-loader")).toBeInTheDocument();
+    });
+
+    it("forwards arbitrary HTML and data attributes safely to root", () => {
+      render(
+        <SettingsLoading
+          id="route-settings-loading"
+          data-env="production"
+          title="Loading settings"
+        />
+      );
+      const root = screen.getByTestId("settings-loading");
+      expect(root).toHaveAttribute("id", "route-settings-loading");
+      expect(root).toHaveAttribute("data-env", "production");
+      expect(root).toHaveAttribute("title", "Loading settings");
+    });
+
+    it("renders optional children slot without displacing default skeleton", () => {
+      render(
+        <SettingsLoading>
+          <div data-testid="settings-custom-addon">Extra status info</div>
+        </SettingsLoading>
+      );
+      expect(screen.getByTestId("settings-loading")).toBeInTheDocument();
+      expect(screen.getByTestId("theme-skeleton")).toBeInTheDocument();
+      expect(screen.getByTestId("settings-custom-addon")).toHaveTextContent("Extra status info");
+    });
+
+    it("preserves accessibility when rendered with custom props and children", async () => {
+      const { container } = render(
+        <SettingsLoading className="custom-test" isBusy={true}>
+          <div className="text-slate-400 text-sm mt-4">Loading user profile preferences...</div>
+        </SettingsLoading>
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+  });
 });

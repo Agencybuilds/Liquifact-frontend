@@ -328,3 +328,5 @@ export default function SettingsLoading({
     </div>
   );
 }
+
+export default SettingsLoading;

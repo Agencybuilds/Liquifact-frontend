@@ -15,6 +15,7 @@
 import { useCallback } from "react";
 import { exportAsCSV, exportAsJSON } from "@/utils/export";
 import { copy } from "@/app/copy/en";
+import { useToast } from "@/components/ToastProvider";
 
 const detail = copy.invest.detail;
 
@@ -44,18 +45,37 @@ function toExportRecord(invoice) {
  */
 export default function InvoiceDetailExport({ invoice }) {
   const disabled = !invoice;
+  const toast = useToast();
 
   const handleExportCSV = useCallback(() => {
     if (!invoice) return;
-    const record = toExportRecord(invoice);
-    exportAsCSV([record], `invoice-${invoice.id}.csv`);
-  }, [invoice]);
+    try {
+      const record = toExportRecord(invoice);
+      exportAsCSV([record], `invoice-${invoice.id}.csv`);
+      // Invariant: Completed export triggered download
+    } catch (err) {
+      console.error("CSV Export failed:", err);
+      toast.error(
+        detail.exportErrorMsg || "Failed to export CSV. Please try again.",
+        detail.exportErrorTitle || "Export Error"
+      );
+    }
+  }, [invoice, toast]);
 
   const handleExportJSON = useCallback(() => {
     if (!invoice) return;
-    const record = toExportRecord(invoice);
-    exportAsJSON([record], `invoice-${invoice.id}.json`);
-  }, [invoice]);
+    try {
+      const record = toExportRecord(invoice);
+      exportAsJSON([record], `invoice-${invoice.id}.json`);
+      // Invariant: Completed export triggered download
+    } catch (err) {
+      console.error("JSON Export failed:", err);
+      toast.error(
+        detail.exportErrorMsg || "Failed to export JSON. Please try again.",
+        detail.exportErrorTitle || "Export Error"
+      );
+    }
+  }, [invoice, toast]);
 
   return (
     <div className="no-print flex gap-3" role="group" aria-label={detail.exportGroupLabel}>
