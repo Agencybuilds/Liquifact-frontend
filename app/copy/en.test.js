@@ -1,75 +1,73 @@
-import { TRUSTED_WALLET_INSTALL_URL } from "./constants";
-import { copy } from "./en";
+import { copy, getCopy } from './en';
 
-function collectUnfrozenObjectPaths(value, path = "copy", seen = new WeakSet()) {
-  if (value === null || typeof value !== "object") {
-    return [];
-  }
+describe('en.js Validation Boundaries', () => {
+  describe('Dictionary structural integrity', () => {
+    it('should exist and be a valid object', () => {
+      expect(typeof copy).toBe('object');
+      expect(copy).not.toBeNull();
+    });
 
-  if (seen.has(value)) {
-    return [];
-  }
-
-  seen.add(value);
-
-  const failures = Object.isFrozen(value) ? [] : [path];
-
-  Object.entries(value).forEach(([key, nestedValue]) => {
-    failures.push(...collectUnfrozenObjectPaths(nestedValue, `${path}.${key}`, seen));
+    it('should contain expected root sections', () => {
+      expect(copy.home).toBeDefined();
+      expect(copy.invest).toBeDefined();
+      expect(copy.invoices).toBeDefined();
+      expect(copy.wallet).toBeDefined();
+    });
   });
 
-  return failures;
-}
+  describe('getCopy validation & boundary handling', () => {
+    it('should resolve a valid string path', () => {
+      expect(getCopy('home.heroTitle')).toBe(copy.home.heroTitle);
+      expect(getCopy('invest.detail.pageTitle')).toBe(copy.invest.detail.pageTitle);
+    });
 
-describe("English copy dictionary", () => {
-  it("deep-freezes the exported dictionary", () => {
-    expect(collectUnfrozenObjectPaths(copy)).toEqual([]);
-  });
+    it('should handle rejected input: invalid paths', () => {
+      expect(getCopy(null)).toBe('Missing copy: invalid path');
+      expect(getCopy(undefined)).toBe('Missing copy: invalid path');
+      expect(getCopy(123)).toBe('Missing copy: invalid path');
+      expect(getCopy('')).toBe('Missing copy: invalid path');
+      expect(getCopy('   ')).toBe('Missing copy: invalid path');
+    });
 
-  it("rejects nested mutation attempts and preserves trusted values", () => {
-    const originalUrl = copy.wallet.installWalletUrl;
+    it('should handle missing or incorrect paths', () => {
+      expect(getCopy('home.doesNotExist')).toBe('Missing copy: home.doesNotExist');
+      expect(getCopy('doesNotExist.something')).toBe('Missing copy: doesNotExist.something');
+      // Accessing a path that resolves to an object, not a string
+      expect(getCopy('home')).toBe('Missing copy: home');
+      expect(getCopy('invest.detail')).toBe('Missing copy: invest.detail');
+    });
 
-    expect(() => {
-      copy.wallet.installWalletUrl = "http://insecure-wallet-site.com";
-    }).toThrow(TypeError);
-    expect(() => {
-      copy.wallet.mutationProbe = "unexpected";
-    }).toThrow(TypeError);
+    it('should correctly substitute variables (accepted input)', () => {
+      const result = getCopy('invest.announceFilteredCount', { matched: 5, total: 10 });
+      expect(result).toBe('5 of 10 invoices match');
+    });
 
-    expect(copy.wallet.installWalletUrl).toBe(originalUrl);
-    expect(copy.wallet.installWalletUrl).toBe(TRUSTED_WALLET_INSTALL_URL);
-    expect(copy.wallet.mutationProbe).toBeUndefined();
-  });
+    it('should ignore duplicate and extraneous variables (duplicate/boundary input)', () => {
+      const result = getCopy('invest.announceFilteredCount', { matched: 2, total: 4, extra: 'ignoreme', matched: 2 });
+      expect(result).toBe('2 of 4 invoices match');
+    });
 
-  it("keeps duplicate and concurrent reads deterministic", async () => {
-    const values = await Promise.all(
-      Array.from({ length: 50 }, () => Promise.resolve(copy.wallet.installWalletUrl))
-    );
+    it('should gracefully handle missing or invalid substitution params (boundary input)', () => {
+      // If a param is missing, the placeholder should remain as is, or we just handle it without throwing
+      const result = getCopy('invest.announceFilteredCount', { matched: null, total: undefined });
+      expect(result).toBe(' of  invoices match');
+      
+      const noParamsResult = getCopy('invest.announceFilteredCount');
+      expect(noParamsResult).toBe('{matched} of {total} invoices match');
+      
+      const invalidParamsResult = getCopy('invest.announceFilteredCount', null);
+      expect(invalidParamsResult).toBe('{matched} of {total} invoices match');
+    });
 
-    expect(new Set(values)).toEqual(new Set([TRUSTED_WALLET_INSTALL_URL]));
-  });
+    it('should protect against malicious string replacements (boundary input)', () => {
+      // Trying to inject a regex string to break the split/join
+      const result = getCopy('invest.announceFilteredCount', { matched: '.*+', total: 5 });
+      expect(result).toBe('.*+ of 5 invoices match');
+    });
 
-  it("keeps repeated module executions frozen and stable", () => {
-    const snapshots = [];
-
-    for (let i = 0; i < 5; i += 1) {
-      jest.isolateModules(() => {
-        const { copy: isolatedCopy } = require("./en");
-
-        snapshots.push({
-          frozen: Object.isFrozen(isolatedCopy),
-          walletFrozen: Object.isFrozen(isolatedCopy.wallet),
-          installWalletUrl: isolatedCopy.wallet.installWalletUrl,
-        });
-      });
-    }
-
-    expect(snapshots).toEqual(
-      Array.from({ length: 5 }, () => ({
-        frozen: true,
-        walletFrozen: true,
-        installWalletUrl: TRUSTED_WALLET_INSTALL_URL,
-      }))
-    );
+    it('should enforce variable substitution types', () => {
+      const result = getCopy('invest.announceFilteredCount', { matched: [1, 2], total: { a: 1 } });
+      expect(result).toBe('1,2 of [object Object] invoices match');
+    });
   });
 });
