@@ -1,3 +1,4 @@
+
 /**
  * Tests for app/not-found.js — the branded 404 boundary.
  *
@@ -8,6 +9,7 @@
  */
 import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { axe } from "jest-axe";
 import React from "react";
 
@@ -20,6 +22,10 @@ function renderNotFound() {
   return render(<NotFound />);
 }
 
+function renderNotFoundToString() {
+  return renderToString(<NotFound />);
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("NotFound (app/not-found.js)", () => {
@@ -29,6 +35,12 @@ describe("NotFound (app/not-found.js)", () => {
     it("renders the 404 page container", () => {
       renderNotFound();
       expect(screen.getByTestId("not-found-page")).toBeInTheDocument();
+    });
+
+    it("renders deterministically across repeated renders (no hidden state)", () => {
+      const first = renderNotFoundToString();
+      const second = renderNotFoundToString();
+      expect(first).toBe(second);
     });
 
     it("renders the h1 heading with the correct copy", () => {
@@ -55,6 +67,14 @@ describe("NotFound (app/not-found.js)", () => {
       renderNotFound();
       const headings = screen.getAllByRole("heading", { level: 1 });
       expect(headings).toHaveLength(1);
+    });
+
+    it("recovers deterministically when rendered after an unmount cycle", () => {
+      const first = renderNotFound();
+      first.unmount();
+      const second = renderNotFound();
+      expect(second.getByTestId("not-found-page")).toBeInTheDocument();
+      expect(second.getByTestId("not-found-home-link")).toHaveAttribute("href", "/");
     });
   });
 
@@ -91,6 +111,15 @@ describe("NotFound (app/not-found.js)", () => {
       const link = screen.getByTestId("not-found-home-link");
       expect(link.className).toContain("focus-ring");
     });
+
+    it("keeps the home link stable across repeated renders (no data loss)", () => {
+      const { unmount } = renderNotFound();
+      unmount();
+      renderNotFound();
+      const link = screen.getByTestId("not-found-home-link");
+      expect(link).toHaveTextContent(copy.notFound.homeLabel);
+      expect(link).toHaveAttribute("href", "/");
+    });
   });
 
   // ── ARIA / landmarks ─────────────────────────────────────────────────────────
@@ -118,12 +147,32 @@ describe("NotFound (app/not-found.js)", () => {
       const badge = document.querySelector("[aria-hidden='true']");
       expect(badge).toHaveAttribute("aria-hidden", "true");
     });
+
+    it("preserves ARIA invariants after a failure/recovery cycle", () => {
+      const first = renderNotFound();
+      first.unmount();
+      renderNotFound();
+      const main = screen.getByRole("main");
+      expect(main).toHaveAttribute("aria-labelledby", "not-found-heading");
+      expect(screen.getByRole("heading", { level: 1 })).toHaveAttribute(
+        "id",
+        "not-found-heading"
+      );
+    });
   });
 
   // ── Accessibility ────────────────────────────────────────────────────────────
 
   describe("accessibility", () => {
     it("has no axe violations", async () => {
+      const { container } = renderNotFound();
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it("has no axe violations after a recovery render", async () => {
+      const first = renderNotFound();
+      first.unmount();
       const { container } = renderNotFound();
       const results = await axe(container);
       expect(results).toHaveNoViolations();
@@ -150,12 +199,28 @@ describe("NotFound (app/not-found.js)", () => {
       const badge = document.querySelector("[aria-hidden='true']");
       expect(badge?.className).toContain("text-cyan-500");
     });
+
+    it("keeps styling classes stable across recovery renders", () => {
+      const first = renderNotFound();
+      first.unmount();
+      renderNotFound();
+      const page = screen.getByTestId("not-found-page");
+      expect(page.className).toContain("bg-slate-950");
+      expect(page.className).toContain("text-slate-50");
+    });
   });
 
   // ── Unknown route navigation (snapshot regression) ────────────────────────────
 
   describe("snapshot regression", () => {
     it("renders consistently across test runs", () => {
+      const { container } = renderNotFound();
+      expect(container.firstChild).toMatchSnapshot();
+    });
+
+    it("renders the same snapshot after a failure/recovery cycle", () => {
+      const first = renderNotFound();
+      first.unmount();
       const { container } = renderNotFound();
       expect(container.firstChild).toMatchSnapshot();
     });

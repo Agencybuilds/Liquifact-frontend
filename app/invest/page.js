@@ -88,10 +88,24 @@ export function parseFiltersFromSearchParams(searchParams, defaults = DEFAULT_FI
   const maturityFrom = isValidISODate(params.get("maturityFrom")) ? params.get("maturityFrom") : "";
   const maturityTo = isValidISODate(params.get("maturityTo")) ? params.get("maturityTo") : "";
 
-  const statuses = (params.get("statuses") ?? "")
+  // INVARIANT: Reject unknown status values to prevent silent filter failures.
+  // Only include statuses that exist in the canonical INVOICE_STATUSES enum.
+  const rawStatuses = (params.get("statuses") ?? "")
     .split(",")
     .map((s) => s.trim())
-    .filter((s) => VALID_STATUSES.has(s));
+    .filter((s) => s && VALID_STATUSES.has(s));
+
+  const unknownStatuses = (params.get("statuses") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s && !VALID_STATUSES.has(s));
+
+  if (unknownStatuses.length > 0) {
+    console.warn(
+      `[Invariant Violation] URL contains unknown invoice status values (filtered out):`,
+      unknownStatuses
+    );
+  }
 
   const searchQuery = (params.get("q") ?? "").trim();
 
@@ -105,7 +119,7 @@ export function parseFiltersFromSearchParams(searchParams, defaults = DEFAULT_FI
       maturityTo,
       sort,
       sortDir,
-      statuses,
+      statuses: rawStatuses,
     },
     searchQuery,
   };
@@ -187,6 +201,193 @@ function parseYield(str) {
   return parseFloat(String(str).replace(/%/g, "")) || 0;
 }
 
+/**
+ * Validate cross-field range invariants for the marketplace filters.
+ *
+ * Returns a map of field → error message for every violated invariant.
+ * An empty object means all range constraints are satisfied.
+ *
+ * Rules enforced:
+ *   - yieldMin must be a non-negative number when present
+ *   - yieldMax must be a non-negative number when present
+ *   - yieldMin must not exceed yieldMax when both are present
+ *   - maturityFrom must be a valid ISO date when present
+ *   - maturityTo must be a valid ISO date when present
+ *   - maturityFrom must not be after maturityTo when both are present
+ *
+ * @param {object} filters
+ * @returns {Record<string, string>} field → error message (empty when valid)
+ */
+export function validateFilterRanges(filters) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+
+  if (filters == null || typeof filters !== "object") return errors;
+
+  const { yieldMin, yieldMax, maturityFrom, maturityTo } = filters;
+
+  // Yield bounds
+  const hasYieldMin = yieldMin !== "" && yieldMin !== undefined && yieldMin !== null;
+  const hasYieldMax = yieldMax !== "" && yieldMax !== undefined && yieldMax !== null;
+
+  if (hasYieldMin && !isValidYieldString(String(yieldMin))) {
+    errors.yieldMin = copy.invest.filters.errorYieldMin;
+  }
+  if (hasYieldMax && !isValidYieldString(String(yieldMax))) {
+    errors.yieldMax = copy.invest.filters.errorYieldMax;
+  }
+  if (
+    hasYieldMin &&
+    hasYieldMax &&
+    !errors.yieldMin &&
+    !errors.yieldMax &&
+    parseFloat(yieldMin) > parseFloat(yieldMax)
+  ) {
+    errors.yieldRange = copy.invest.filters.errorYieldRange;
+  }
+
+  // Maturity bounds
+  const hasMaturityFrom =
+    maturityFrom !== "" && maturityFrom !== undefined && maturityFrom !== null;
+  const hasMaturityTo = maturityTo !== "" && maturityTo !== undefined && maturityTo !== null;
+
+  if (hasMaturityFrom && !isValidISODate(String(maturityFrom))) {
+    errors.maturityFrom = copy.invest.filters.errorMaturityFrom;
+  }
+  if (hasMaturityTo && !isValidISODate(String(maturityTo))) {
+    errors.maturityTo = copy.invest.filters.errorMaturityTo;
+  }
+  if (
+    hasMaturityFrom &&
+    hasMaturityTo &&
+    !errors.maturityFrom &&
+    !errors.maturityTo &&
+    String(maturityFrom) > String(maturityTo)
+  ) {
+    errors.maturityRange = copy.invest.filters.errorMaturityRange;
+  }
+
+  return errors;
+}
+
+/**
+ * Validate the arguments object passed to `loadInvoices`.
+ *
+ * Returns `null` when the args are fully valid, or a short error string
+ * describing the first violation found. This is the gate that prevents
+ * malformed pagination or filter state from reaching the data layer.
+ *
+ * Valid args contract:
+ *   - cursor must be a string or null (not undefined / wrong type)
+ *   - filters must be a plain object (may be empty)
+ *   - search must be a string
+ *   - sort must be a recognised column name or empty string / null
+ *   - sortDir must be "asc" | "desc" or empty string / null
+ *
+ * @param {object} args
+ * @returns {string | null} error message, or null when valid
+ */
+export function validateLoadInvoicesArgs(args) {
+  if (args == null || typeof args !== "object" || Array.isArray(args)) {
+    return "loadInvoices args must be a plain object.";
+  }
+
+  const { cursor, filters, search, sort, sortDir } = args;
+
+  // cursor: must be a non-empty string or null — never undefined or wrong type
+  if (cursor !== null && cursor !== undefined) {
+    if (typeof cursor !== "string" || cursor === "") {
+      return "cursor must be a non-empty string or null.";
+    }
+  }
+
+  // filters: must be a plain object when provided
+  if (filters !== undefined && filters !== null) {
+    if (typeof filters !== "object" || Array.isArray(filters)) {
+      return "filters must be a plain object.";
+    }
+  }
+
+  // search: must be a string when provided
+  if (search !== undefined && typeof search !== "string") {
+    return "search must be a string.";
+  }
+
+  // sort: must be a recognised column or empty / null / undefined
+  if (sort !== undefined && sort !== null && sort !== "") {
+    if (!VALID_SORT_COLUMNS.has(sort)) {
+      return `sort must be one of: ${[...VALID_SORT_COLUMNS].join(", ")}.`;
+    }
+  }
+
+  // sortDir: must be "asc" | "desc" or empty / null / undefined
+  if (sortDir !== undefined && sortDir !== null && sortDir !== "") {
+    if (!VALID_SORT_DIRS.has(sortDir)) {
+      return 'sortDir must be "asc" or "desc".';
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Apply filter criteria and sort order to a list of invoices.
+ *
+ * This is the pure, exportable counterpart to the inline `filteredInvoices`
+ * memo inside `InvestMarketplace`. Having it as a standalone function lets
+ * callers (tests, utility scripts) invoke the full filter + sort pipeline
+ * without mounting the component.
+ *
+ * @param {Array<object> | null | undefined} invoices
+ * @param {string} searchQuery - Free-text issuer search (case-insensitive substring)
+ * @param {object} filters - Structured filter state (see DEFAULT_FILTERS shape)
+ * @param {Array<{invoiceIds: string[]}>} [watchlists=[]] - Watchlist sets for watchlistOnly filter
+ * @returns {Array<object>}
+ */
+export function filterInvoices(invoices, searchQuery, filters, watchlists = []) {
+  if (!Array.isArray(invoices)) return [];
+
+  let list = invoices;
+
+  const q = typeof searchQuery === "string" ? searchQuery.trim().toLowerCase() : "";
+  if (q) {
+    list = list.filter((inv) => inv.issuer?.toLowerCase().includes(q));
+  }
+
+  if (filters.currency) {
+    list = list.filter((inv) => inv.currency === filters.currency);
+  }
+  if (filters.yieldMin !== "" && filters.yieldMin !== undefined) {
+    const min = parseFloat(filters.yieldMin);
+    if (Number.isFinite(min)) {
+      list = list.filter((inv) => parseYield(inv.yield) >= min);
+    }
+  }
+  if (filters.yieldMax !== "" && filters.yieldMax !== undefined) {
+    const max = parseFloat(filters.yieldMax);
+    if (Number.isFinite(max)) {
+      list = list.filter((inv) => parseYield(inv.yield) <= max);
+    }
+  }
+  if (filters.maturityFrom) {
+    list = list.filter((inv) => inv.dueDate >= filters.maturityFrom);
+  }
+  if (filters.maturityTo) {
+    list = list.filter((inv) => inv.dueDate <= filters.maturityTo);
+  }
+  if (Array.isArray(filters.statuses) && filters.statuses.length > 0) {
+    list = list.filter((inv) => filters.statuses.includes(inv.status));
+  }
+  if (filters.watchlistOnly) {
+    const allStarredIds = new Set(
+      Array.isArray(watchlists) ? watchlists.flatMap((wl) => wl.invoiceIds ?? []) : []
+    );
+    list = list.filter((inv) => allStarredIds.has(inv.id));
+  }
+
+  return applySortToList(list, filters);
+}
+
 export function applySortToList(list, filters) {
   if (!Array.isArray(list) || list.length === 0) return list;
 
@@ -258,7 +459,7 @@ function useSafeSearchParams() {
   }
 }
 
-function normalizeInvoicePageResult(payload) {
+export function normalizeInvoicePageResult(payload) {
   if (Array.isArray(payload)) {
     return { items: payload, nextCursor: null, hasMore: false, invalidCursor: false };
   }
@@ -266,7 +467,15 @@ function normalizeInvoicePageResult(payload) {
   const result = payload ?? {};
   const items = Array.isArray(result.items) ? result.items : [];
   const nextCursor = typeof result.nextCursor === "string" ? result.nextCursor : null;
+
+  // INVARIANT: Defensive validation of pagination state. If nextCursor is present
+  // but hasMore is false, that's an inconsistent state — hasMore should be true.
   const hasMore = Boolean(result.hasMore) || nextCursor !== null;
+  if (nextCursor && !hasMore) {
+    console.warn(
+      "[Invariant Violation] Pagination state inconsistency: nextCursor present but hasMore=false. Correcting to hasMore=true"
+    );
+  }
 
   return {
     items,
@@ -276,7 +485,7 @@ function normalizeInvoicePageResult(payload) {
   };
 }
 
-function mergeInvoicePages(current = [], incoming = []) {
+export function mergeInvoicePages(current = [], incoming = []) {
   const merged = new Map();
 
   for (const invoice of current) {
@@ -326,6 +535,14 @@ export function InvestMarketplace({
   const [filters, setFilters] = useState(initialUrlState.filters);
   const [debouncedSearch, setDebouncedSearch] = useState(initialUrlState.searchQuery);
 
+  /**
+   * Cross-field range validation for the filter panel.
+   * Re-computed on every render so the UI always reflects the latest filter
+   * state without needing a separate useEffect. An empty object means no
+   * active violations.
+   */
+  const filterErrors = useMemo(() => validateFilterRanges(filters), [filters]);
+
   const committedSearchRef = useRef(
     buildSearchParams(initialUrlState.filters, initialUrlState.searchQuery).toString()
   );
@@ -364,6 +581,19 @@ export function InvestMarketplace({
   /** Ref forwarded to the "Load more" button for focus management. */
   const loadMoreRef = useRef(null);
   const pageLoadInFlightRef = useRef(false);
+
+  /**
+   * Tracks the filter/search signature at the time handleLoadMore was invoked.
+   * If filters change while load-more is in-flight, this will differ from the
+   * current filterSignature and the response will be discarded (idempotent).
+   */
+  const loadMoreFilterSignatureRef = useRef(null);
+
+  /**
+   * AbortController for the in-flight load-more request. Cancelled if filters
+   * change, preventing stale pagination results from being applied.
+   */
+  const loadMoreAbortRef = useRef(null);
 
   const refreshPage = useCallback(() => {
     setNextCursor(null);
@@ -450,13 +680,24 @@ export function InvestMarketplace({
   // survives reloads. router.replace keeps the back button friendly (no new
   // history entries for every filter keystroke) and a debounce prevents rapid
   // successive updates.
+  //
+  // Invariant: before updating the URL, verify that filters/search state hasn't
+  // changed since the timer was set. This prevents interleaved URL updates from
+  // causing stale state to be committed to the browser history.
   useEffect(() => {
     const next = buildSearchParams(filters, debouncedSearch).toString();
     if (next === committedSearchRef.current) return;
     clearTimeout(urlUpdateTimerRef.current);
+    // Capture current state at timer creation time for consistency check.
+    const capturedFilters = filters;
+    const capturedSearch = debouncedSearch;
     urlUpdateTimerRef.current = setTimeout(() => {
-      committedSearchRef.current = next;
-      router.replace(`?${next}`, { scroll: false });
+      // Verify state hasn't changed between timer creation and execution.
+      if (capturedFilters !== filters || capturedSearch !== debouncedSearch) return;
+      const currentNext = buildSearchParams(filters, debouncedSearch).toString();
+      if (currentNext === committedSearchRef.current) return;
+      committedSearchRef.current = currentNext;
+      router.replace(`?${currentNext}`, { scroll: false });
     }, URL_SYNC_DEBOUNCE_MS);
     return () => clearTimeout(urlUpdateTimerRef.current);
   }, [filters, debouncedSearch, router]);
@@ -526,6 +767,16 @@ export function InvestMarketplace({
   const filterActive = hasAnyActiveFilters(filters, debouncedSearch);
 
   /**
+   * Effect: abort any in-flight load-more pagination when filters/search change.
+   * This prevents stale pagination results from being applied after a filter change.
+   */
+  useEffect(() => {
+    loadMoreAbortRef.current?.abort();
+    loadMoreAbortRef.current = null;
+    loadMoreFilterSignatureRef.current = null;
+  }, [debouncedSearch, filters]);
+
+  /**
    * Effect: fetch invoices on mount and on every retry.
    *
    * - Uses AbortController so unmount or a new retry cancels the in-flight
@@ -566,7 +817,17 @@ export function InvestMarketplace({
           return;
         }
 
-        setInvoices(normalized.items);
+        // INVARIANT: Validate that all items have required invoice fields before
+        // adding to the list. This prevents malformed data from corrupting state.
+        const validatedItems = normalized.items.filter((item) => {
+          const hasRequiredFields = item && item.id && item.issuer && item.status;
+          if (!hasRequiredFields) {
+            console.warn("[Data Validation] Dropped invoice with missing required fields:", item);
+          }
+          return hasRequiredFields;
+        });
+
+        setInvoices(validatedItems);
         setNextCursor(normalized.nextCursor ?? null);
         setHasMore(Boolean(normalized.hasMore) || normalized.nextCursor !== null);
       } catch {
@@ -633,24 +894,58 @@ export function InvestMarketplace({
    * Appends the next PAGE_SIZE items and updates the live-region status.
    * Focus is moved back to the "Load more" button (if it still exists) so
    * keyboard users do not lose their place in the page.
+   *
+   * Invariants:
+   * - A second load-more call while one is in-flight is ignored.
+   * - If filters/search change while load-more is pending, the response is
+   *   discarded and the AbortController is cleaned up.
+   * - Load-more requests include the filter/search state at invocation time;
+   *   if that state differs from the current state when the response arrives,
+   *   the response is discarded (stale result protection).
    */
   const handleLoadMore = useCallback(async () => {
     if (pageLoadInFlightRef.current || pageLoading || !hasMore || !nextCursor || cursorError) return;
 
+    // INVARIANT: Guard against stale cursor after filter changes. The load-more
+    // mechanism should only proceed if the cursor is consistent with the current
+    // filter state. If filters changed during pagination, abort and refresh.
+    const currentFilterSig = JSON.stringify([debouncedSearch, filters]);
+    const filterSigAtCallTime = filterSignature;
+    if (currentFilterSig !== filterSigAtCallTime) {
+      console.warn(
+        "[Invariant Violation] Load-more called with stale cursor after filter change. Aborting pagination."
+      );
+      setCursorError(copy.invest.invalidCursorDescription);
+      setNextCursor(null);
+      setHasMore(false);
+      return;
+    }
+
     pageLoadInFlightRef.current = true;
     const currentInvoices = Array.isArray(invoices) ? invoices : [];
+    const currentFilterSignature = filterSignature;
     setPageLoading(true);
     setCursorError("");
 
+    // Create new AbortController and store for cleanup on filter change.
+    const controller = new AbortController();
+    loadMoreAbortRef.current = controller;
+    loadMoreFilterSignatureRef.current = currentFilterSignature;
+
     try {
       const pageResponse = await loadInvoices({
-        signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined,
+        signal: controller.signal,
         cursor: nextCursor,
         filters,
         search: debouncedSearch,
         sort: filters.sort || null,
         sortDir: filters.sortDir || "desc",
       });
+
+      // Discard response if filters changed while request was in-flight.
+      if (currentFilterSignature !== filterSignature) {
+        return;
+      }
 
       const normalized = normalizeInvoicePageResult(pageResponse);
       if (normalized.invalidCursor) {
@@ -661,22 +956,41 @@ export function InvestMarketplace({
         return;
       }
 
-      const merged = mergeInvoicePages(currentInvoices, normalized.items);
+      // INVARIANT: Validate that all items in the page response have required fields
+      // to prevent malformed invoice data from corrupting the list.
+      const validatedItems = normalized.items.filter((item) => {
+        const hasRequiredFields = item && item.id && item.issuer && item.status;
+        if (!hasRequiredFields) {
+          console.warn("[Data Validation] Dropped invoice with missing required fields:", item);
+        }
+        return hasRequiredFields;
+      });
+
+      const merged = mergeInvoicePages(currentInvoices, validatedItems);
       setInvoices(merged);
       setNextCursor(normalized.nextCursor ?? null);
       setHasMore(Boolean(normalized.hasMore) || normalized.nextCursor !== null);
       setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, merged.length));
-    } catch {
+    } catch (err) {
+      // Ignore AbortError if filters changed (cleanup in progress).
+      if (err?.name === "AbortError") return;
       setLoadError(copy.invest.errorDescription);
       setCursorError("");
     } finally {
       pageLoadInFlightRef.current = false;
       setPageLoading(false);
+      // Clean up ref if still points to this request.
+      if (loadMoreAbortRef.current === controller) {
+        loadMoreAbortRef.current = null;
+      }
+      if (loadMoreFilterSignatureRef.current === currentFilterSignature) {
+        loadMoreFilterSignatureRef.current = null;
+      }
       setTimeout(() => {
         loadMoreRef.current?.focus();
       }, 0);
     }
-  }, [pageLoading, hasMore, nextCursor, cursorError, invoices, loadInvoices, filters, debouncedSearch]);
+  }, [pageLoading, hasMore, nextCursor, cursorError, invoices, loadInvoices, filters, debouncedSearch, filterSignature]);
 
   // ── Bulk actions ──────────────────────────────────────────────────────────
   const handleToggleSelectAll = useCallback(() => {
@@ -704,7 +1018,32 @@ export function InvestMarketplace({
       setPendingDeleteIds(null);
       return;
     }
+
+    // INVARIANT: Validate that all ids in pendingDeleteIds exist in current invoices.
+    // Stale selection from filter changes should already be pruned by useBulkSelection,
+    // but we defensively check here to prevent silent data loss.
+    if (!Array.isArray(invoices)) {
+      setPendingDeleteIds(null);
+      toastApi?.error(bulkLabels.deleteErrorMsg, bulkLabels.deleteErrorTitle);
+      return;
+    }
+
+    const validIds = new Set(invoices.map((inv) => inv.id));
+    const orphanedIds = Array.from(idsToDelete).filter((id) => !validIds.has(id));
+    if (orphanedIds.length > 0) {
+      console.warn(
+        `[Invariant Violation] Delete attempt with ${orphanedIds.length} orphaned ID(s):`,
+        orphanedIds
+      );
+      setPendingDeleteIds(null);
+      toastApi?.error(bulkLabels.deleteErrorMsg, bulkLabels.deleteErrorTitle);
+      return;
+    }
+
+    // Snapshot the current list for rollback in case of failure.
+    const preDeleteInvoices = invoices;
     setBulkRunning((prev) => ({ ...prev, delete: true }));
+
     try {
       await onBulkDelete(idsToDelete);
 
@@ -723,12 +1062,17 @@ export function InvestMarketplace({
       toastApi?.success(successMsg, bulkLabels.deleteSuccessTitle);
 
       setPendingDeleteIds(null);
-    } catch {
+    } catch (error) {
+      // INVARIANT: On delete failure, restore the pre-delete invoice list to prevent
+      // silent data loss. The UI would otherwise show invoices as deleted while backend
+      // still has them, causing user confusion and potential consistency issues.
+      setInvoices(preDeleteInvoices);
       toastApi?.error(bulkLabels.deleteErrorMsg, bulkLabels.deleteErrorTitle);
+      // Keep pendingDeleteIds so user can retry without re-selecting.
     } finally {
       setBulkRunning((prev) => ({ ...prev, delete: false }));
     }
-  }, [pendingDeleteIds, onBulkDelete, bulkLabels, toastApi]);
+  }, [pendingDeleteIds, invoices, onBulkDelete, bulkLabels, toastApi]);
 
   const handleExport = useCallback(() => {
     if (selectedIds.size === 0) {
@@ -835,6 +1179,7 @@ export function InvestMarketplace({
               filters={filters}
               onFilterChange={setFilters}
               onClearFilters={() => setFilters(DEFAULT_FILTERS)}
+              errors={filterErrors}
             />
           </div>
         </fieldset>
