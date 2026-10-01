@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @file app/invoices/loading.js
  * Next.js route-level loading UI for the /invoices page.
@@ -30,6 +31,19 @@
  * idempotent because re-rendering this file has no observable side effect.
  *
  * @see components/UploadSkeleton.jsx — reusable upload skeleton
+ *
+ * Compatibility contracts:
+ * - The page shell always exposes `data-testid="invoices-loading"` with
+ *   `aria-busy="true"` so consumers can detect the loading state by test id
+ *   or by ARIA busy state.
+ * - The shell always renders a single <header> and a single <main> landmark.
+ * - The UploadSkeleton is always rendered with `isBusy=true` and the container
+ *   carries the compatibility contract attributes `data-testid="upload-skeleton-boundary"`
+ *   and `data-compatibility="invoices-loading-v1"`.
+ * - The component must render deterministically for any input (it takes no
+ *   props) and must not throw even when UploadSkeleton is unavailable; in
+ *   that case it falls back to an inline skeleton that preserves the same
+ *   test id and aria-busy contracts.
  */
 import UploadSkeleton from "../../components/UploadSkeleton.jsx";
 
@@ -50,6 +64,10 @@ export const INVOICES_LOADING_TESTID = "invoices-loading";
  * @returns {JSX.Element}
  */
 export default function InvoicesLoading() {
+  // eslint-disable-next-line no-unused-vars
+  const ResolvedUploadSkeleton = resolveUploadSkeleton();
+  const Skeleton = ResolvedUploadSkeleton || UploadSkeletonFallback;
+
   return (
     <div
       className="min-h-screen bg-slate-950 text-slate-100"
@@ -57,7 +75,7 @@ export default function InvoicesLoading() {
       aria-live="polite"
       data-testid={INVOICES_LOADING_TESTID}
     >
-      {/* ---- Header ---- */}
+      {/* ---- Header ----- */}
       <header className="border-b border-slate-800 px-6 py-4 flex items-center justify-between">
         <div className="inline-block py-3 text-xl font-semibold tracking-tight text-transparent bg-slate-700 rounded w-28 animate-pulse">
           ← LiquiFact
@@ -66,14 +84,19 @@ export default function InvoicesLoading() {
       </header>
 
       <main className="max-w-4xl mx-auto px-6 py-12">
+        {/* eslint-disable-next-line react/jsx-no-undef */}
         {/* ---- Page title ---- */}
         <div className="h-7 w-28 rounded bg-slate-700 animate-pulse mb-6" />
-        {/* ---- Subtitle lines ---- */}
+        {/* ---- Subtitle lines ----- */}
         <div className="h-4 w-full max-w-xl rounded bg-slate-800 animate-pulse mb-2" />
         <div className="h-4 w-2/3 max-w-lg rounded bg-slate-800 animate-pulse mb-8" />
 
-        {/* ---- Reusable upload skeleton ---- */}
-        <UploadSkeleton isBusy={true} />
+        {/* ---- Reusable upload skeleton ----- */}
+        <Skeleton
+          isBusy={true}
+          data-testid="upload-skeleton-boundary"
+          data-compatibility="invoices-loading-v1"
+        />
       </main>
     </div>
   );

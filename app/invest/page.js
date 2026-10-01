@@ -1,4 +1,4 @@
-"use client";
+"tuse client";
 
 import { Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -62,7 +62,7 @@ function isValidYieldString(value) {
  *
  * @param {URLSearchParams} searchParams
  * @param {object} [defaults=DEFAULT_FILTERS]
- * @returns {{ filters: object, searchQuery: string }}
+ * @returns {{filters: object, searchQuery: string}}
  */
 export function parseFiltersFromSearchParams(searchParams, defaults = DEFAULT_FILTERS) {
   const params = sanitizeMarketplaceSearchParams(searchParams ?? new URLSearchParams());
@@ -88,10 +88,24 @@ export function parseFiltersFromSearchParams(searchParams, defaults = DEFAULT_FI
   const maturityFrom = isValidISODate(params.get("maturityFrom")) ? params.get("maturityFrom") : "";
   const maturityTo = isValidISODate(params.get("maturityTo")) ? params.get("maturityTo") : "";
 
-  const statuses = (params.get("statuses") ?? "")
+  // INVARIANT: Reject unknown status values to prevent silent filter failures.
+  // Only include statuses that exist in the canonical INVOICE_STATUSES enum.
+  const rawStatuses = (params.get("statuses") ?? "")
     .split(",")
     .map((s) => s.trim())
-    .filter((s) => VALID_STATUSES.has(s));
+    .filter((s) => s && VALID_STATUSES.has(s));
+
+  const unknownStatuses = (params.get("statuses") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s && !VALID_STATUSES.has(s));
+
+  if (unknownStatuses.length > 0) {
+    console.warn(
+      `[Invariant Violation] URL contains unknown invoice status values (filtered out):`,
+      unknownStatuses
+    );
+  }
 
   const searchQuery = (params.get("q") ?? "").trim();
 
@@ -105,7 +119,7 @@ export function parseFiltersFromSearchParams(searchParams, defaults = DEFAULT_FI
       maturityTo,
       sort,
       sortDir,
-      statuses,
+      statuses: rawStatuses,
     },
     searchQuery,
   };
@@ -187,6 +201,193 @@ function parseYield(str) {
   return parseFloat(String(str).replace(/%/g, "")) || 0;
 }
 
+/**
+ * Validate cross-field range invariants for the marketplace filters.
+ *
+ * Returns a map of field → error message for every violated invariant.
+ * An empty object means all range constraints are satisfied.
+ *
+ * Rules enforced:
+ *   - yieldMin must be a non-negative number when present
+ *   - yieldMax must be a non-negative number when present
+ *   - yieldMin must not exceed yieldMax when both are present
+ *   - maturityFrom must be a valid ISO date when present
+ *   - maturityTo must be a valid ISO date when present
+ *   - maturityFrom must not be after maturityTo when both are present
+ *
+ * @param {object} filters
+ * @returns {Record<string, string>} field → error message (empty when valid)
+ */
+export function validateFilterRanges(filters) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+
+  if (filters == null || typeof filters !== "object") return errors;
+
+  const { yieldMin, yieldMax, maturityFrom, maturityTo } = filters;
+
+  // Yield bounds
+  const hasYieldMin = yieldMin !== "" && yieldMin !== undefined && yieldMin !== null;
+  const hasYieldMax = yieldMax !== "" && yieldMax !== undefined && yieldMax !== null;
+
+  if (hasYieldMin && !isValidYieldString(String(yieldMin))) {
+    errors.yieldMin = copy.invest.filters.errorYieldMin;
+  }
+  if (hasYieldMax && !isValidYieldString(String(yieldMax))) {
+    errors.yieldMax = copy.invest.filters.errorYieldMax;
+  }
+  if (
+    hasYieldMin &&
+    hasYieldMax &&
+    !errors.yieldMin &&
+    !errors.yieldMax &&
+    parseFloat(yieldMin) > parseFloat(yieldMax)
+  ) {
+    errors.yieldRange = copy.invest.filters.errorYieldRange;
+  }
+
+  // Maturity bounds
+  const hasMaturityFrom =
+    maturityFrom !== "" && maturityFrom !== undefined && maturityFrom !== null;
+  const hasMaturityTo = maturityTo !== "" && maturityTo !== undefined && maturityTo !== null;
+
+  if (hasMaturityFrom && !isValidISODate(String(maturityFrom))) {
+    errors.maturityFrom = copy.invest.filters.errorMaturityFrom;
+  }
+  if (hasMaturityTo && !isValidISODate(String(maturityTo))) {
+    errors.maturityTo = copy.invest.filters.errorMaturityTo;
+  }
+  if (
+    hasMaturityFrom &&
+    hasMaturityTo &&
+    !errors.maturityFrom &&
+    !errors.maturityTo &&
+    String(maturityFrom) > String(maturityTo)
+  ) {
+    errors.maturityRange = copy.invest.filters.errorMaturityRange;
+  }
+
+  return errors;
+}
+
+/**
+ * Validate the arguments object passed to `loadInvoices`.
+ *
+ * Returns `null` when the args are fully valid, or a short error string
+ * describing the first violation found. This is the gate that prevents
+ * malformed pagination or filter state from reaching the data layer.
+ *
+ * Valid args contract:
+ *   - cursor must be a string or null (not undefined / wrong type)
+ *   - filters must be a plain object (may be empty)
+ *   - search must be a string
+ *   - sort must be a recognised column name or empty string / null
+ *   - sortDir must be "asc" | "desc" or empty string / null
+ *
+ * @param {object} args
+ * @returns {string | null} error message, or null when valid
+ */
+export function validateLoadInvoicesArgs(args) {
+  if (args == null || typeof args !== "object" || Array.isArray(args)) {
+    return "loadInvoices args must be a plain object.";
+  }
+
+  const { cursor, filters, search, sort, sortDir } = args;
+
+  // cursor: must be a non-empty string or null — never undefined or wrong type
+  if (cursor !== null && cursor !== undefined) {
+    if (typeof cursor !== "string" || cursor === "") {
+      return "cursor must be a non-empty string or null.";
+    }
+  }
+
+  // filters: must be a plain object when provided
+  if (filters !== undefined && filters !== null) {
+    if (typeof filters !== "object" || Array.isArray(filters)) {
+      return "filters must be a plain object.";
+    }
+  }
+
+  // search: must be a string when provided
+  if (search !== undefined && typeof search !== "string") {
+    return "search must be a string.";
+  }
+
+  // sort: must be a recognised column or empty / null / undefined
+  if (sort !== undefined && sort !== null && sort !== "") {
+    if (!VALID_SORT_COLUMNS.has(sort)) {
+      return `sort must be one of: ${[...VALID_SORT_COLUMNS].join(", ")}.`;
+    }
+  }
+
+  // sortDir: must be "asc" | "desc" or empty / null / undefined
+  if (sortDir !== undefined && sortDir !== null && sortDir !== "") {
+    if (!VALID_SORT_DIRS.has(sortDir)) {
+      return 'sortDir must be "asc" or "desc".';
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Apply filter criteria and sort order to a list of invoices.
+ *
+ * This is the pure, exportable counterpart to the inline `filteredInvoices`
+ * memo inside `InvestMarketplace`. Having it as a standalone function lets
+ * callers (tests, utility scripts) invoke the full filter + sort pipeline
+ * without mounting the component.
+ *
+ * @param {Array<object> | null | undefined} invoices
+ * @param {string} searchQuery - Free-text issuer search (case-insensitive substring)
+ * @param {object} filters - Structured filter state (see DEFAULT_FILTERS shape)
+ * @param {Array<{invoiceIds: string[]}>} [watchlists=[]] - Watchlist sets for watchlistOnly filter
+ * @returns {Array<object>}
+ */
+export function filterInvoices(invoices, searchQuery, filters, watchlists = []) {
+  if (!Array.isArray(invoices)) return [];
+
+  let list = invoices;
+
+  const q = typeof searchQuery === "string" ? searchQuery.trim().toLowerCase() : "";
+  if (q) {
+    list = list.filter((inv) => inv.issuer?.toLowerCase().includes(q));
+  }
+
+  if (filters.currency) {
+    list = list.filter((inv) => inv.currency === filters.currency);
+  }
+  if (filters.yieldMin !== "" && filters.yieldMin !== undefined) {
+    const min = parseFloat(filters.yieldMin);
+    if (Number.isFinite(min)) {
+      list = list.filter((inv) => parseYield(inv.yield) >= min);
+    }
+  }
+  if (filters.yieldMax !== "" && filters.yieldMax !== undefined) {
+    const max = parseFloat(filters.yieldMax);
+    if (Number.isFinite(max)) {
+      list = list.filter((inv) => parseYield(inv.yield) <= max);
+    }
+  }
+  if (filters.maturityFrom) {
+    list = list.filter((inv) => inv.dueDate >= filters.maturityFrom);
+  }
+  if (filters.maturityTo) {
+    list = list.filter((inv) => inv.dueDate <= filters.maturityTo);
+  }
+  if (Array.isArray(filters.statuses) && filters.statuses.length > 0) {
+    list = list.filter((inv) => filters.statuses.includes(inv.status));
+  }
+  if (filters.watchlistOnly) {
+    const allStarredIds = new Set(
+      Array.isArray(watchlists) ? watchlists.flatMap((wl) => wl.invoiceIds ?? []) : []
+    );
+    list = list.filter((inv) => allStarredIds.has(inv.id));
+  }
+
+  return applySortToList(list, filters);
+}
+
 export function applySortToList(list, filters) {
   if (!Array.isArray(list) || list.length === 0) return list;
 
@@ -258,7 +459,7 @@ function useSafeSearchParams() {
   }
 }
 
-function normalizeInvoicePageResult(payload) {
+export function normalizeInvoicePageResult(payload) {
   if (Array.isArray(payload)) {
     return { items: payload, nextCursor: null, hasMore: false, invalidCursor: false };
   }
@@ -266,7 +467,15 @@ function normalizeInvoicePageResult(payload) {
   const result = payload ?? {};
   const items = Array.isArray(result.items) ? result.items : [];
   const nextCursor = typeof result.nextCursor === "string" ? result.nextCursor : null;
+
+  // INVARIANT: Defensive validation of pagination state. If nextCursor is present
+  // but hasMore is false, that's an inconsistent state — hasMore should be true.
   const hasMore = Boolean(result.hasMore) || nextCursor !== null;
+  if (nextCursor && !hasMore) {
+    console.warn(
+      "[Invariant Violation] Pagination state inconsistency: nextCursor present but hasMore=false. Correcting to hasMore=true"
+    );
+  }
 
   return {
     items,
@@ -276,7 +485,7 @@ function normalizeInvoicePageResult(payload) {
   };
 }
 
-function mergeInvoicePages(current = [], incoming = []) {
+export function mergeInvoicePages(current = [], incoming = []) {
   const merged = new Map();
 
   for (const invoice of current) {
@@ -320,16 +529,33 @@ export function InvestMarketplace({
   const [cursorError, setCursorError] = useState("");
   const [pageLoading, setPageLoading] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   // Filter state
   const [searchQuery, setSearchQuery] = useState("");
   const [loadError, setLoadError] = useState("");
   const [filters, setFilters] = useState(initialUrlState.filters);
   const [debouncedSearch, setDebouncedSearch] = useState(initialUrlState.searchQuery);
 
+  /**
+   * Cross-field range validation for the filter panel.
+   * Re-computed on every render so the UI always reflects the latest filter
+   * state without needing a separate useEffect. An empty object means no
+   * active violations.
+   */
+  const filterErrors = useMemo(() => validateFilterRanges(filters), [filters]);
+
   const committedSearchRef = useRef(
     buildSearchParams(initialUrlState.filters, initialUrlState.searchQuery).toString()
   );
   const urlUpdateTimerRef = useRef(null);
+
+  /**
+   * Monotonic token identifying the latest load attempt. Any async result
+   * whose token does not match the current value is stale and must be
+   * discarded. This makes recovery deterministic under retries, concurrent
+   * loads, and unmount: only the newest attempt may commit state.
+   */
+  const loadTokenRef = useRef(0);
 
   /**
    * When the URL query changes (back/forward, shared link), parse and apply
@@ -341,8 +567,7 @@ export function InvestMarketplace({
     setFilters(parsed.filters);
     setSearchQuery(parsed.searchQuery);
     setDebouncedSearch(parsed.searchQuery);
-    committedSearchRef.current = buildSearchParams(parsed.filters, parsed.searchQuery).toString();
-    // searchParamsValue is intentionally omitted; searchParamsString is the stable signal.
+    committedSearchRef.current = searchParamsString;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParamsString]);
 
@@ -371,6 +596,7 @@ export function InvestMarketplace({
     setCursorError("");
     setPageLoading(false);
     setVisibleCount(PAGE_SIZE);
+    setLoadAttempt((n) => n + 1);
     setRetryKey((k) => k + 1);
   }, []);
 
@@ -411,6 +637,7 @@ export function InvestMarketplace({
     setHasMore(false);
     setPageLoading(false);
     setVisibleCount(PAGE_SIZE);
+    setLoadAttempt((n) => n + 1);
     setRetryKey((k) => k + 1);
   }, [setInvoices, setLoadError, setRetryKey]);
 
@@ -539,6 +766,7 @@ export function InvestMarketplace({
   useEffect(() => {
     let isActive = true;
     const controller = new AbortController();
+    const token = ++loadTokenRef.current;
 
     const announceLoadCompletion = async () => {
       try {
@@ -555,7 +783,7 @@ export function InvestMarketplace({
           sortDir: filters.sortDir || "desc",
         });
 
-        if (!isActive) return;
+        if (!isActive || token !== loadTokenRef.current) return;
 
         const normalized = normalizeInvoicePageResult(response);
         if (normalized.invalidCursor) {
@@ -570,12 +798,12 @@ export function InvestMarketplace({
         setNextCursor(normalized.nextCursor ?? null);
         setHasMore(Boolean(normalized.hasMore) || normalized.nextCursor !== null);
       } catch {
-        if (!isActive) return;
+        if (!isActive || token !== loadTokenRef.current) return;
 
         setInvoices(null);
         setLoadError(copy.invest.errorDescription);
       } finally {
-        if (isActive) {
+        if (isActive && token === loadTokenRef.current) {
           setPageLoading(false);
           setLoadGeneration((generation) => generation + 1);
         }
@@ -589,7 +817,7 @@ export function InvestMarketplace({
       controller.abort();
     };
     // retryKey triggers a fresh load on retry without changing loadInvoices.
-  }, [loadInvoices, retryKey, debouncedSearch, filters]);
+  }, [loadInvoices, retryKey, loadAttempt, debouncedSearch, filters]);
 
   // Derive the polite live-region announcement directly from reactive state.
   // Using useMemo (rather than a useEffect + setState) avoids a cascading
@@ -638,6 +866,7 @@ export function InvestMarketplace({
     if (pageLoadInFlightRef.current || pageLoading || !hasMore || !nextCursor || cursorError) return;
 
     pageLoadInFlightRef.current = true;
+    const token = loadTokenRef.current;
     const currentInvoices = Array.isArray(invoices) ? invoices : [];
     setPageLoading(true);
     setCursorError("");
@@ -651,6 +880,10 @@ export function InvestMarketplace({
         sort: filters.sort || null,
         sortDir: filters.sortDir || "desc",
       });
+
+      // A newer load (retry / filter change) superseded this page request;
+      // discard the result so we never merge stale pages into fresh state.
+      if (token !== loadTokenRef.current) return;
 
       const normalized = normalizeInvoicePageResult(pageResponse);
       if (normalized.invalidCursor) {
@@ -667,6 +900,7 @@ export function InvestMarketplace({
       setHasMore(Boolean(normalized.hasMore) || normalized.nextCursor !== null);
       setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, merged.length));
     } catch {
+      if (token !== loadTokenRef.current) return;
       setLoadError(copy.invest.errorDescription);
       setCursorError("");
     } finally {

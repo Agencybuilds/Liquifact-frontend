@@ -6,6 +6,22 @@ import NavMenu from "../../components/NavMenu";
 import UploadZone from "../../components/UploadZone";
 import UploadErrorBoundary from "../../components/UploadErrorBoundary";
 import InvoiceList from "../../components/InvoiceList";
+import { reportError } from "../../lib/observability/reportError";
+
+/**
+ * Deterministic failure recovery for the invoices page.
+
+ * Invariants:
+ *  1. Every optimistic invoice has a stable, unique client-key.
+ *     Consecutive uploads of the same payload are never deduped away.
+ *  2. A record is either pending or settled (committed or rolled back).
+ *     There is no intermediate state that can be observed by the UI.
+ *  3. Retrying a failed upload must not duplicate a committed record.
+ *  4. Concurrent retries for the same record are coalesced into a single
+ *     in-flight request.
+ *  5. Failures are observable (logged with correlation id) and user-visible
+ *     without exposing sensitive data.
+ */
 
 /**
  * Failure recovery invariants for the invoices page:
@@ -42,7 +58,13 @@ export const sanitizeErrorMessage = (raw) => {
 };
 
 export default function InvoicesPage() {
-  const [optimisticInvoices, setOptimisticInvoices] = useState([]);
+  // Optimistic records are stored in a Map keyed by a client-generated
+  // correlation id (rather than an array index) so that a retry operation
+  // can atomically replace the exact record it owns, even when other
+  // uploads arrive in between.
+  const [records, setRecords] = React.useState(() => new Map());
+  // Tick forces a re-render after mutating the Map in place.
+  const [, forceRender] = React.useReducer((n) => n + 1, 0);
 
   /**
    * Merge an update into the optimistic list by id. If the id already
@@ -144,7 +166,11 @@ export default function InvoicesPage() {
             </UploadErrorBoundary>
           </div>
           <div className="lg:col-span-2">
-            <InvoiceList optimisticInvoices={optimisticInvoices} />
+            <InvoiceList
+              optimisticInvoices={optimisticInvoices}
+              onRetry={handleRetry}
+              onDismiss={handleDismiss}
+            />
           </div>
         </div>
       </main>
