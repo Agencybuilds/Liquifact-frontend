@@ -2,7 +2,7 @@
  * Mock invoice data — replace with real API call once the backend endpoint
  * is available (follow-up: link backend issue here).
  *
- * ⚠️  SINGLE SOURCE OF TRUTH: This file is the only place mock invoice
+ * SINGLE SOURCE OF TRUTH: This file is the only place mock invoice
  * fixtures are defined. All components and tests must import MOCK_INVOICES
  * and loadMockInvoices from here. Do NOT redeclare them inline elsewhere.
  * Remove this block and swap loadMockInvoices for the real API client once
@@ -11,6 +11,32 @@
  * Contract per item: { id, issuer, amount, currency, dueDate, yield, status }
  * NOTE: yield values are illustrative; contracts use on-chain basis-points and
  * actual settlement is at maturity.
+ *
+ * Concurrency invariants (hardened, ISSUE-1)
+ * ──────────────────────────────────────────
+ * Only one real fetch can be in-flight at a time. Concurrent callers that
+ * arrive while a fetch is already in progress share the same Promise
+ * (fan-out) so a burst of requests produces exactly one timer/network trip.
+ * An AbortSignal passed via the signal option cancels only that caller's
+ * participation without interrupting other concurrent waiters.
+ * The in-flight slot is cleared on settlement so the next independent call
+ * starts a fresh fetch (no stale promise reuse).
+ * The test-hook override (window.__TEST_MOCK_INVOICES__) is accepted only
+ * in non-production browser environments and must be an Array; invalid
+ * overrides fall through to the real data path.
+ *
+ * Validation boundaries (ISSUE-3)
+ * ─────────────────────────────────
+ * loadMockInvoices  — options must be a plain object or omitted; a non-object
+ *                     options argument is treated as {} (no throw).
+ *                     signal must be an AbortSignal or undefined.
+ * daysUntilMaturity — dateStr must be a YYYY-MM-DD ISO date string and must
+ *                     round-trip cleanly through Date (rejects roll-overs like
+ *                     2026-09-99). Returns NaN for any invalid input rather
+ *                     than throwing, so callers can guard with isNaN().
+ *                     now must be a valid Date; invalid Date returns NaN.
+ * getInvoiceById    — id must be a non-empty string. Anything else returns
+ *                     undefined without throwing.
  */
 export const MOCK_INVOICES = [
   {
@@ -303,11 +329,28 @@ export async function loadMockInvoices(options) {
  * Calculate the number of days between now and a target date string.
  * Returns positive days for future, negative for past, 0 for today.
  * Dates are compared at midnight UTC (time-of-day insensitive).
+ *
+ * Validation boundaries (ISSUE-3)
+ * ─────────────────────────────────
+ * dateStr — must be a valid YYYY-MM-DD ISO date string that round-trips
+ *           through Date without roll-over. Returns NaN for any invalid
+ *           value (null, undefined, wrong format, non-existent date).
+ * now     — must be a Date instance with a valid (non-NaN) time value.
+ *           Returns NaN if now is an invalid Date.
+ *
+ * Callers should guard the return value with Number.isNaN().
+ *
  * @param {string} dateStr - ISO date string (YYYY-MM-DD)
  * @param {Date} [now] - Reference date (defaults to new Date())
- * @returns {number}
+ * @returns {number} Integer days, or NaN for invalid input.
  */
 export function daysUntilMaturity(dateStr, now = new Date()) {
+  // Validate dateStr.
+  if (!isValidDateStr(dateStr)) return NaN;
+
+  // Validate now.
+  if (!(now instanceof Date) || Number.isNaN(now.getTime())) return NaN;
+
   const target = new Date(dateStr + "T00:00:00Z");
   const today = new Date(now.toISOString().slice(0, 10) + "T00:00:00Z");
   return Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
@@ -316,10 +359,19 @@ export function daysUntilMaturity(dateStr, now = new Date()) {
 /**
  * Resolve an invoice by its id from the current mock invoice list.
  *
+ * Validation boundaries (ISSUE-3)
+ * ─────────────────────────────────
+ * id — must be a non-empty string. Passing null, undefined, a number, or an
+ *      empty string returns undefined without throwing. Duplicate calls with
+ *      the same id always return the same object reference (MOCK_INVOICES is
+ *      a module-level constant — no mutation occurs inside this function).
+ *
  * @param {string} id - Invoice identifier to look up.
- * @returns {object | undefined} The matching invoice object, or undefined if no invoice exists with the given id.
+ * @returns {object | undefined} The matching invoice object, or undefined.
  */
 export function getInvoiceById(id) {
+  // Validation boundary: non-string or empty-string ids can never match.
+  if (typeof id !== "string" || id === "") return undefined;
   return MOCK_INVOICES.find((invoice) => invoice.id === id);
 }
 
