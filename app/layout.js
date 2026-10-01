@@ -21,8 +21,29 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const DEFAULT_SITE_URL = "http://localhost:3000";
+const ALLOWED_METADATA_PROTOCOLS = new Set(["http:", "https:"]);
+
+export function resolveMetadataBase(siteUrl = process.env.NEXT_PUBLIC_SITE_URL) {
+  const candidate = typeof siteUrl === "string" ? siteUrl.trim() : "";
+
+  if (!candidate) {
+    return new URL(DEFAULT_SITE_URL);
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    if (!ALLOWED_METADATA_PROTOCOLS.has(parsed.protocol)) {
+      return new URL(DEFAULT_SITE_URL);
+    }
+    return parsed;
+  } catch {
+    return new URL(DEFAULT_SITE_URL);
+  }
+}
+
 export const metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"),
+  metadataBase: resolveMetadataBase(),
   title: `LiquiFact — ${copy.home.heroTitle}`,
   description: copy.home.heroSub,
   openGraph: {
@@ -64,16 +85,31 @@ const THEME_SCRIPT = `(function(){
   var key = '${THEME_STORAGE_KEY}';
   var themes = ${JSON.stringify(THEMES)};
   var pref = 'system';
-  try { var s = localStorage.getItem(key); if (s && themes.indexOf(s) !== -1) pref = s; } catch(e){}
+  try {
+    var raw = localStorage.getItem(key);
+    var s;
+    try { s = JSON.parse(raw); } catch(e) { s = raw; }
+    if (s && (themes.indexOf(s) !== -1 || s === 'auto')) pref = s;
+  } catch(e){}
   var effective = pref;
-  if (pref === 'system') {
-    effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  if (pref === 'system' || pref === 'auto') {
+    try {
+      effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+    } catch(e) { effective = 'dark'; }
   }
+  if (effective !== 'light' && effective !== 'dark') effective = 'dark';
   document.documentElement.setAttribute('data-theme', effective);
 })();`;
 
+const CSP_NONCE_PATTERN = /^[A-Za-z0-9+/]{22}==$/;
+
 export default async function RootLayout({ children }) {
-  const nonce = (await headers()).get("x-nonce") ?? undefined;
+  // Keep request headers local to this render; never share nonce state across requests.
+  const requestHeaders = await headers();
+  const nonce = requestHeaders.get("x-nonce");
+  if (!nonce || !CSP_NONCE_PATTERN.test(nonce)) {
+    throw new Error("Root layout requires a valid CSP nonce.");
+  }
 
   return (
     <html lang="en">

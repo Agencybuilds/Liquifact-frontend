@@ -124,7 +124,7 @@ describe("Home health render", () => {
   });
 
   it("does not add depth limit text for nested payloads", async () => {
-    const deep = { a: { b: { c: { d: { e: { f: { g: "deep" } } } } } } };
+    const deep = { a: { b: { c: { d: { e: { f: { g: "deep" } } } } } } } };
     mockFetchOnce(deep);
     render(<Home />);
     await clickCheckHealth();

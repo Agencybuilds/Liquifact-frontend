@@ -215,6 +215,12 @@ describe("getCategoryList", () => {
     const tail = out.slice(1);
     expect(tail).toEqual([...tail].sort());
   });
+
+  it("ignores malformed rows and blank or non-string categories", () => {
+    expect(
+      getCategoryList([null, {}, { category: "privacy" }, { category: "  " }, { category: 7 }])
+    ).toEqual(["all", "privacy"]);
+  });
 });
 
 describe("getSettingsLoadAnnouncement", () => {
@@ -282,6 +288,11 @@ describe("MOCK_SETTINGS shape (single source of truth)", () => {
     const cats = new Set(MOCK_SETTINGS.map((s) => s.category));
     expect(cats.size).toBeGreaterThan(1);
   });
+
+  it("freezes the canonical list and its rows against shared mutation", () => {
+    expect(Object.isFrozen(MOCK_SETTINGS)).toBe(true);
+    expect(MOCK_SETTINGS.every((row) => Object.isFrozen(row))).toBe(true);
+  });
 });
 
 describe("loadMockSettings (test hook coverage)", () => {
@@ -309,6 +320,34 @@ describe("loadMockSettings (test hook coverage)", () => {
     return expect(loadMockSettings()).resolves.toBe(override);
   });
 
+  it("rejects malformed and duplicate-id test overrides", async () => {
+    window.__TEST_MOCK_SETTINGS__ = [{ id: "duplicate" }, { id: "duplicate" }];
+    await expect(loadMockSettings()).rejects.toThrow(/invalid category field/i);
+
+    const duplicate = {
+      id: "duplicate",
+      category: "display",
+      label: "Example",
+      type: "toggle",
+      value: "enabled",
+      description: "Example setting",
+    };
+    window.__TEST_MOCK_SETTINGS__ = [duplicate, { ...duplicate }];
+    await expect(loadMockSettings()).rejects.toThrow(/duplicate id/i);
+  });
+
+  it("ignores the browser test override in production", async () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    window.__TEST_MOCK_SETTINGS__ = [];
+    process.env.NODE_ENV = "production";
+
+    try {
+      await expect(loadMockSettings()).resolves.toBe(MOCK_SETTINGS);
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+  });
+
   it("resolves to an empty array when a pre-aborted signal is supplied", async () => {
     const controller = new AbortController();
     controller.abort();
@@ -322,6 +361,25 @@ describe("loadMockSettings (test hook coverage)", () => {
     controller.abort();
     const result = await promise;
     expect(result).toEqual([]);
+  });
+
+  it("removes the abort listener after a successful load", async () => {
+    const signal = new AbortController().signal;
+    const removeListener = jest.spyOn(signal, "removeEventListener");
+
+    await expect(loadMockSettings({ signal })).resolves.toBe(MOCK_SETTINGS);
+    expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it("keeps concurrent loads isolated when only one request is aborted", async () => {
+    const abortedController = new AbortController();
+    const activeController = new AbortController();
+    const abortedLoad = loadMockSettings({ signal: abortedController.signal });
+    const activeLoad = loadMockSettings({ signal: activeController.signal });
+
+    abortedController.abort();
+    await expect(abortedLoad).resolves.toEqual([]);
+    await expect(activeLoad).resolves.toBe(MOCK_SETTINGS);
   });
 
   it("getSettingById finds a known id", () => {
