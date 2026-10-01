@@ -90,6 +90,11 @@ export function validateNotFoundCopy(copyNotFound) {
 const notFoundView = validateNotFoundCopy(copy?.notFound);
 
 export default function NotFound() {
+  const statusLabel = resolveCopy("statusLabel");
+  const heading = resolveCopy("heading");
+  const description = resolveCopy("description");
+  const homeLabel = resolveCopy("homeLabel");
+
   return (
     <div
       className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-4 py-16 text-slate-50"

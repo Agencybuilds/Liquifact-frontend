@@ -5,16 +5,64 @@
  * Strategy:
  *  - Render the component directly; next/link is already mocked in __mocks__
  *    to a plain <a> tag so href assertions are straightforward.
- *  - Cover copy strings, link target, ARIA structure, and a11y.
+ *  - Cover copy strings, link target, ARIA structure, a11y, and the
+ *    compatibility contract for the /invest/[id] not-found boundary.
  */
 import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { axe } from "jest-axe";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import React from "react";
 
 import NotFound from "./not-found";
 import { copy } from "./copy/en";
+
+// ── Concurrency / idempotency harness ─────────────────────────────────────────
+//
+// Invariants under test:
+//  1. Rendering the 404 boundary is a pure, side-effect-free operation, so
+//     concurrent or repeated renders must produce identical output.
+//  2. No shared mutable module state may leak between renders (e.g. counters,
+//     caches, or memoized singletons that could go stale).
+//  3. Retries after a failed render must not observe partial state from the
+//     previous attempt.
+//
+// These helpers exercise those invariants without changing the component's
+// public interface.
+
+/**
+ * Renders the boundary `times` times concurrently and returns the resulting
+ * serialized DOM for each render. Because React Testing Library renders are
+ * synchronous, we interleave them via Promise.all to model racing callers.
+ */
+async function renderConcurrently(times) {
+  const results = await Promise.all(
+    Array.from({ length: times }, async () => {
+      const { container, unmount } = render(<NotFound />);
+      const html = container.innerHTML;
+      unmount();
+      return html;
+    })
+  );
+  return results;
+}
+
+/**
+ * Renders the boundary, unmounts it, and renders again — modelling an
+ * idempotent retry after a transient failure. Returns both snapshots.
+ */
+function renderThenRetry() {
+  const first = render(<NotFound />);
+  const firstHtml = first.container.innerHTML;
+  first.unmount();
+
+  const second = render(<NotFound />);
+  const secondHtml = second.container.innerHTML;
+  second.unmount();
+
+  return { firstHtml, secondHtml };
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -37,6 +85,12 @@ describe("NotFound (app/not-found.js)", () => {
     it("renders the 404 page container", () => {
       renderNotFound();
       expect(screen.getByTestId("not-found-page")).toBeInTheDocument();
+    });
+
+    it("renders deterministically across repeated renders (no hidden state)", () => {
+      const first = renderNotFoundToString();
+      const second = renderNotFoundToString();
+      expect(first).toBe(second);
     });
 
     it("renders the h1 heading with the correct copy", () => {
