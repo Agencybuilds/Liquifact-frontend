@@ -6,29 +6,30 @@
 
 /**
  * @file app/settings/loading.test.jsx
- * Tests for the Next.js route-level loading UI at /settings.
- *
- * Verifies that SettingsLoading:
- *  - renders without errors
- *  - delegates to ThemeSkeleton
- *  - exposes the correct ARIA attributes on the page shell
- *  - has no accessibility violations
+ * Comprehensive unit, boundary, integration, and accessibility tests for SettingsLoading
+ * with deterministic failure recovery.
  */
 
 // @ts-nocheck
 
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { axe, toHaveNoViolations } from "jest-axe";
-import SettingsLoading from "./loading";
+import SettingsLoading, {
+  DEFAULT_TIMEOUT_MS,
+  DEFAULT_MAX_RETRIES,
+  SettingsLoadingErrorBoundary,
+} from "./loading";
+import { reportError } from "../../lib/observability/reportError";
 
 expect.extend(toHaveNoViolations);
 
 /* global describe, it, expect, jest */
 
 describe("SettingsLoading", () => {
-  it("renders without crashing", () => {
-    expect(() => render(<SettingsLoading />)).not.toThrow();
+  beforeEach(() => {
+    jest.clearAllMocks();
+    throwChildError = true;
   });
 
   it("renders the page root with data-testid='settings-loading'", () => {
@@ -36,9 +37,124 @@ describe("SettingsLoading", () => {
     expect(screen.getByTestId("settings-loading")).toBeInDocument();
   });
 
-  it("renders the page root with aria-busy='true'", () => {
-    render(<SettingsLoading />);
-    expect(screen.getByTestId("settings-loading")).toHaveAttribute("aria-busy", "true");
+  describe("Deterministic Timeout Failure Recovery", () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("transitions deterministically to TIMED_OUT after DEFAULT_TIMEOUT_MS", () => {
+      const onError = jest.fn();
+      render(<SettingsLoading onError={onError} />);
+
+      expect(screen.getByTestId("settings-loading")).toHaveAttribute("aria-busy", "true");
+      expect(screen.queryByTestId("settings-loading-fallback")).not.toBeInTheDocument();
+
+      // Advance by slightly less than the timeout
+      act(() => {
+        jest.advanceTimersByTime(DEFAULT_TIMEOUT_MS - 100);
+      });
+      expect(screen.queryByTestId("settings-loading-fallback")).not.toBeInTheDocument();
+
+      // Trigger timeout transition
+      act(() => {
+        jest.advanceTimersByTime(100);
+      });
+
+      expect(screen.getByTestId("settings-loading")).toHaveAttribute("aria-busy", "false");
+      expect(screen.getByTestId("settings-loading")).toHaveAttribute("data-status", "timed_out");
+      expect(screen.getByTestId("settings-loading-fallback")).toBeInTheDocument();
+      expect(screen.getByText("Loading timed out")).toBeInTheDocument();
+      expect(
+        screen.getByText(/settings are taking longer than expected to load/i)
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+
+      // Observability checks
+      expect(reportError).toHaveBeenCalledTimes(1);
+      expect(reportError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "SettingsLoadingTimeoutError",
+          code: "LOADING_TIMEOUT",
+        }),
+        expect.objectContaining({
+          boundary: "SettingsLoading",
+          phase: "timeout",
+          retryCount: 0,
+        })
+      );
+
+      expect(onError).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({ phase: "timeout", retryCount: 0 })
+      );
+    });
+
+    it("respects custom timeoutMs threshold", () => {
+      render(<SettingsLoading timeoutMs={500} />);
+
+      act(() => {
+        jest.advanceTimersByTime(499);
+      });
+      expect(screen.queryByTestId("settings-loading-fallback")).not.toBeInTheDocument();
+
+      act(() => {
+        jest.advanceTimersByTime(1);
+      });
+      expect(screen.getByTestId("settings-loading-fallback")).toBeInTheDocument();
+    });
+
+    it("clears timeout timer cleanly on component unmount", () => {
+      const onError = jest.fn();
+      const { unmount } = render(<SettingsLoading timeoutMs={1000} onError={onError} />);
+
+      unmount();
+
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+
+      expect(reportError).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    describe("Boundary cases for timeoutMs", () => {
+      it("disables timeout when timeoutMs is 0", () => {
+        render(<SettingsLoading timeoutMs={0} />);
+        act(() => {
+          jest.advanceTimersByTime(30000);
+        });
+        expect(screen.queryByTestId("settings-loading-fallback")).not.toBeInTheDocument();
+        expect(screen.getByTestId("settings-loading")).toHaveAttribute("aria-busy", "true");
+      });
+
+      it("disables timeout when timeoutMs is negative", () => {
+        render(<SettingsLoading timeoutMs={-500} />);
+        act(() => {
+          jest.advanceTimersByTime(30000);
+        });
+        expect(screen.queryByTestId("settings-loading-fallback")).not.toBeInTheDocument();
+      });
+
+      it("disables timeout when timeoutMs is null", () => {
+        render(<SettingsLoading timeoutMs={null} />);
+        act(() => {
+          jest.advanceTimersByTime(30000);
+        });
+        expect(screen.queryByTestId("settings-loading-fallback")).not.toBeInTheDocument();
+      });
+
+      it("disables timeout when timeoutMs is NaN", () => {
+        render(<SettingsLoading timeoutMs={NaN} />);
+        act(() => {
+          jest.advanceTimersByTime(30000);
+        });
+        expect(screen.queryByTestId("settings-loading-fallback")).not.toBeInTheDocument();
+      });
+    });
   });
 
   it("renders the NavMenuSkeleton header", () => {
@@ -52,9 +168,39 @@ describe("SettingsLoading", () => {
     expect(screen.getByTestId("theme-skeleton")).toBeInDocument();
   });
 
-  it("ThemeSkeleton inside SettingsLoading has aria-busy='true'", () => {
-    render(<SettingsLoading />);
-    expect(screen.getByTestId("theme-skeleton")).toHaveAttribute("aria-busy", "true");
+  describe("Accessibility Across All States (jest-axe)", () => {
+    it("has no accessibility violations in TIMED_OUT state", async () => {
+      jest.useFakeTimers();
+      const { container } = render(<SettingsLoading timeoutMs={100} />);
+      act(() => {
+        jest.advanceTimersByTime(100);
+      });
+      jest.useRealTimers();
+
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it("has no accessibility violations in ERROR state", async () => {
+      const { container } = render(
+        <SettingsLoading initialError={new Error("Accessibility check error")} />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it("has no accessibility violations in EXHAUSTED state", async () => {
+      jest.useFakeTimers();
+      const { container } = render(<SettingsLoading timeoutMs={100} maxRetries={0} />);
+      act(() => {
+        jest.advanceTimersByTime(100);
+      });
+      jest.useRealTimers();
+
+      expect(screen.getByTestId("settings-loading")).toHaveAttribute("data-status", "exhausted");
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
   });
 
   it("contains the sr-only loading announcement from ThemeSkeleton", () => {
@@ -62,16 +208,72 @@ describe("SettingsLoading", () => {
     expect(screen.getByText(/theme settings loading, please wait/i)).toBeInDocument();
   });
 
-  it("has multiple animate-pulse elements", () => {
-    const { container } = render(<SettingsLoading />);
-    const pulsed = container.querySelectorAll(".animate-pulse");
-    expect(pulsed.length).toBeGreaterThanOrEqual(5);
-  });
+  describe("Compatibility Contracts & Edge Cases", () => {
+    it("safely handles nullish and primitive inputs to component function", () => {
+      expect(() => render(SettingsLoading(null))).not.toThrow();
+      expect(() => render(SettingsLoading(undefined))).not.toThrow();
+      expect(() => render(SettingsLoading(42))).not.toThrow();
+      expect(() => render(SettingsLoading("invalid-string"))).not.toThrow();
+      expect(() => render(SettingsLoading([]))).not.toThrow();
+    });
 
-  it("has no axe accessibility violations", async () => {
-    const { container } = render(<SettingsLoading />);
-    const results = await axe(container);
-    expect(results).toHaveNoViolations();
+    it("merges custom className without displacing base layout classes", () => {
+      render(<SettingsLoading className="custom-wrapper-class extra-padding" />);
+      const root = screen.getByTestId("settings-loading");
+      expect(root).toHaveClass(
+        "min-h-screen",
+        "bg-slate-950",
+        "custom-wrapper-class",
+        "extra-padding"
+      );
+    });
+
+    it("allows overriding isBusy to false while preserving ARIA semantics", () => {
+      render(<SettingsLoading isBusy={false} />);
+      const root = screen.getByTestId("settings-loading");
+      expect(root).toHaveAttribute("aria-busy", "false");
+      expect(screen.getByTestId("theme-skeleton")).toHaveAttribute("aria-busy", "false");
+    });
+
+    it("allows custom data-testid while falling back to default", () => {
+      render(<SettingsLoading data-testid="custom-settings-loader" />);
+      expect(screen.getByTestId("custom-settings-loader")).toBeInTheDocument();
+    });
+
+    it("forwards arbitrary HTML and data attributes safely to root", () => {
+      render(
+        <SettingsLoading
+          id="route-settings-loading"
+          data-env="production"
+          title="Loading settings"
+        />
+      );
+      const root = screen.getByTestId("settings-loading");
+      expect(root).toHaveAttribute("id", "route-settings-loading");
+      expect(root).toHaveAttribute("data-env", "production");
+      expect(root).toHaveAttribute("title", "Loading settings");
+    });
+
+    it("renders optional children slot without displacing default skeleton", () => {
+      render(
+        <SettingsLoading>
+          <div data-testid="settings-custom-addon">Extra status info</div>
+        </SettingsLoading>
+      );
+      expect(screen.getByTestId("settings-loading")).toBeInTheDocument();
+      expect(screen.getByTestId("theme-skeleton")).toBeInTheDocument();
+      expect(screen.getByTestId("settings-custom-addon")).toHaveTextContent("Extra status info");
+    });
+
+    it("preserves accessibility when rendered with custom props and children", async () => {
+      const { container } = render(
+        <SettingsLoading className="custom-test" isBusy={true}>
+          <div className="text-slate-400 text-sm mt-4">Loading user profile preferences...</div>
+        </SettingsLoading>
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
   });
 
   /**

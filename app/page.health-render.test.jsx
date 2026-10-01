@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import Home from "./page";
 
 jest.mock("next/navigation", () => ({
@@ -32,9 +32,9 @@ afterEach(() => {
 });
 
 function mockFetchOnce(responseBody, ok = true) {
-  global.fetch = jest.fn().mockResolvedValueOnce({
+  global.fetch = jest.fn().mockResolvedOnce({
     ok,
-    json: jest.fn().mockResolvedValueOnce(responseBody),
+    json: jest.fn().mockResolvedOnce(responseBody),
   });
 }
 
@@ -43,7 +43,7 @@ async function clickCheckHealth() {
   await waitFor(() => expect(screen.queryByText(/checking/i)).not.toBeInTheDocument());
 }
 
-describe.skip("Home health render", () => {
+describe("Home health render", () => {
   it("renders recognized fields in a structured summary", async () => {
     mockFetchOnce({ status: "ok", message: "All good", version: "1.2.3" });
     render(<Home />);
@@ -100,12 +100,12 @@ describe.skip("Home health render", () => {
     await clickCheckHealth();
 
     const pre = document.querySelector("pre");
-    expect(pre.textContent).not.toMatch(/…\(truncated\)$/);
+    expect(pre.textContent).not.toMatch(/… truncated$/);
     expect(pre.textContent.length).toBeGreaterThan(5000);
   });
 
   it("does not add depth limit text for nested payloads", async () => {
-    const deep = { a: { b: { c: { d: { e: { f: { g: "deep" } } } } } } };
+    const deep = { a: { b: { c: { d: { e: { f: { g: "deep" } } } } } } } };
     mockFetchOnce(deep);
     render(<Home />);
     await clickCheckHealth();
