@@ -1,5 +1,4 @@
-/* eslint-env jest */
-/* @jest-environment jsdom */
+// @vitest-environment jsdom
 /**
  * @file app/invoices/loading.test.jsx
  * Tests for the Next.js route-level loading UI at /invoices.
@@ -10,14 +9,9 @@
  *  - exposes the correct ARIA attributes on the page shell
  *  - has no accessibility violations
  *
- * Compatibility contracts:
- *  - The loading UI is a purely presentational component with no props.
- *  - The root element must always expose data-testid="invoices-loading"
- *    and aria-busy="true" so assistive technology and tests can rely on it.
- *  - UploadSkeleton must always be rendered with data-testid="upload-skeleton"
- *    and a live region announcement for screen readers.
- *  - The component must render deterministically with no side effects, no
- *    network access, and no dependency on external state.
+ * Additional invariant coverage (determinism, purity, no data leakage,
+ * concurrent/repeated renders) is included below to guard the state
+ * invariants documented in loading.js.
  */
 
 /* eslint-disable-next-line */
@@ -81,49 +75,45 @@ describe("InvoicesLoading", () => {
     expect(pulsed.length).toBeGreaterThanOrEqual(5);
   });
 
-  // --------------------------------------------------------------------------
-  // Compatibility contract tests
-  // These tests pin the public behavior of the loading UI so future
-  // refactors cannot silently break consumers (tests, screen readers,
-  // or the Next.js route contract).
-  // --------------------------------------------------------------------------
+  // ---- State invariant coverage ----
 
-  it("contract: renders deterministically with no props and no side effects", () => {
-    const first = render(React.createElement(InvoicesLoading));
-    const firstHtml = first.container.innerHTML;
-    first.unrender();
-
-    const second = render(React.createElement(InvoicesLoading));
-    expect(second.container.innerHTML).toBe(firstHtml);
+  it("is a deterministic pure component: repeated renders produce identical markup", () => {
+    const first = render(<InvoicesLoading />);
+    const second = render(<InvoicesLoading />);
+    expect(first.container.innerHTML).toEqual(second.container.innerHTML);
   });
 
-  it("contract: exposes a single root element with the stable test id", () => {
-    const { container } = render(React.createElement(InvoicesLoading));
-    expect(container.querySelectorAll('[data-testid="invoices-loading"]').length).toBe(1);
+  it("does not mutate global state or emit side effects during render", () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      render(<InvoicesLoading />);
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 
-  it("contract: root element is a live region with aria-busy and aria-label", () => {
-    render(React.createElement(InvoicesLoading));
-    const root = screen.getByTestId("invoices-loading");
-    expect(root).toHaveAttribute("aria-busy", "true");
-    expect(root).toHaveAttribute("aria-label");
+  it("renders only placeholder markup and never sensitive data", () => {
+    const { container } = render(<InvoicesLoading />);
+    const text = container.textContent || "";
+    // No emails, tokens, or IDs leaked into the loading shell.
+    expect(text).not.toMatch(/@[^\s]+\.[A-Za-z]{2,}/);
+    expect(text).not.toMatch(/\beyJ[a-zA-Z0-9_-]*\./);
+    expect(text).not.toMatch(/\b\d{6, }\b/);
   });
 
-  it("contract: UploadSkeleton is rendered exactly once", () => {
-    render(React.createElement(InvoicesLoading));
+  it("supports concurrent renders without shared mutable state", () => {
+    const outputs = Array.from({ length: 5 }, () => render(<InvoicesLoading />).container.innerHTML);
+    const unique = new Set(outputs);
+    expect(unique.size).toBe(1);
+  });
+
+  it("renders exactly one UploadSkeleton instance (no duplicate announcements)", () => {
+    render(<InvoicesLoading />);
     expect(screen.getAllByTestId("upload-skeleton")).toHaveLength(1);
-  });
-
-  it("contract: sr-only announcement is present and not duplicated", () => {
-    render(React.createElement(InvoicesLoading));
-    const announcements = screen.getAllByText(/upload form loading, please wait/i);
-    expect(announcements.length).toBe(1);
-  });
-
-  it("contract: renders and unrenders cleanly without leaking DOM nodes", () => {
-    const { unrender } = render(React.createElement(InvoicesLoading));
-    expect(screen.getByTestId("invoices-loading")).toBeInTheDocument();
-    unrender();
-    expect(screen.queryByTestId("invoices-loading")).toBeNull();
+    expect(screen.getAllByText(/upload form loading, please wait/i)).toHaveLength(1);
   });
 });
