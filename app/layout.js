@@ -104,9 +104,9 @@ const THEME_SCRIPT = `(function(){
 const CSP_NONCE_PATTERN = /^[A-Za-z0-9+/]{22}==$/;
 
 export default async function RootLayout({ children }) {
-  const nonce = (await headers()).get("x-nonce");
-  // Middleware creates a base64 nonce from 16 random bytes. Reject missing or
-  // malformed values instead of rendering an inline script that CSP will block.
+  // Keep request headers local to this render; never share nonce state across requests.
+  const requestHeaders = await headers();
+  const nonce = requestHeaders.get("x-nonce");
   if (!nonce || !CSP_NONCE_PATTERN.test(nonce)) {
     throw new Error("Root layout requires a valid CSP nonce.");
   }
