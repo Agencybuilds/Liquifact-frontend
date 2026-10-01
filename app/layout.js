@@ -85,11 +85,19 @@ const THEME_SCRIPT = `(function(){
   var key = '${THEME_STORAGE_KEY}';
   var themes = ${JSON.stringify(THEMES)};
   var pref = 'system';
-  try { var s = localStorage.getItem(key); if (s && themes.indexOf(s) !== -1) pref = s; } catch(e){}
+  try {
+    var raw = localStorage.getItem(key);
+    var s;
+    try { s = JSON.parse(raw); } catch(e) { s = raw; }
+    if (s && (themes.indexOf(s) !== -1 || s === 'auto')) pref = s;
+  } catch(e){}
   var effective = pref;
-  if (pref === 'system') {
-    effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  if (pref === 'system' || pref === 'auto') {
+    try {
+      effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+    } catch(e) { effective = 'dark'; }
   }
+  if (effective !== 'light' && effective !== 'dark') effective = 'dark';
   document.documentElement.setAttribute('data-theme', effective);
 })();`;
 
