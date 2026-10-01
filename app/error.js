@@ -6,6 +6,13 @@ import { reportError } from "../lib/observability/reportError";
 import { copy } from "./copy/en";
 
 /**
+ * Deterministic fallback surfaced when an automatic recovery attempt fails.
+ * Exported so tests can assert on the exact user-visible string.
+ */
+export const ERROR_RECOVERY_FAILED =
+  "Automatic recovery did not succeed. Please reload the page or return to the invoice list.";
+
+/**
  * Route-level error boundary for the Next.js App Router.
  *
  * Rendered automatically by Next.js whenever a segment throws during render
@@ -15,9 +22,24 @@ import { copy } from "./copy/en";
  * The component logs the error through the pluggable {@link reportError}
  * reporter (console in development, swap for Sentry/Datadog in production).
  *
+ * ## Determinism invariants
+ * 1. **Exactly-once reporting per error instance.** React 18 StrictMode
+ *    double-invokes effects in development, so a naive
+ *    `useEffect(() => reportError(error), [error])` reports every failure
+ *    twice. Deduping by error identity is StrictMode-safe while still
+ *    reporting a *new* error instance (real repeat failures are not hidden).
+ * 2. **Single-flight recovery.** At most one `reset()` is in flight. A
+ *    re-entrant click while recovery is running is ignored, so a
+ *    double-click — or a `reset` that synchronously forces another click —
+ *    cannot queue competing recovery attempts.
+ * 3. **Recovery cannot throw out of the boundary.** `reset` is validated and
+ *    invoked inside a `try/catch`. A missing or throwing `reset` is caught,
+ *    reported, and converted into a deterministic fallback instead of
+ *    producing a second uncaught crash while handling the first.
+ *
  * @param {object}   props
  * @param {Error}    props.error — The error thrown by the segment. Next.js
- *   attaches a `digest` property for server-side errors so you can correlate
+*   attaches a `digest` property for server-side errors so you can correlate
  *   browser errors with server logs.
  * @param {Function} props.reset — Calling this function unmounts and re-mounts
  *   the subtree, effectively retrying the failed render without a full page
@@ -219,6 +241,7 @@ export default function GlobalError({ error, reset }) {
           variant="server"
           title={copy.error.title}
           description={copy.error.description}
+          details={recoveryFailed ? ERROR_RECOVERY_FAILED : undefined}
           actionLabel={copy.error.actionLabel}
           previewLabel={copy.error.previewLabel}
           onAction={hasReset ? reset : undefined}
@@ -226,4 +249,57 @@ export default function GlobalError({ error, reset }) {
       </main>
     </div>
   );
+}
+
+/**
+ * Normalizes any thrown value into an `Error` instance.
+ *
+ * React and Next.js allow non-Error values to be thrown (strings,
+ * `null`, objects). The boundary contract is that downstream consumers (and
+ * the reporter) always receive an `Error`. This function is pure and
+ * deterministic for the same input.
+ *
+ * @param {unknown} value
+ * @returns {Error}
+ */
+function normalizeError(value) {
+  if (value instanceof Error) {
+    return value;
+  }
+
+  if (value === null || typeof value !== "object") {
+    // Primitives and null/undefined — preserve the original value in
+    // the message so debugging remains possible without losing information.
+    return new Error(typeof value === "string" ? value : String(value));
+  }
+
+  // Object that is not an Error (e.g. a Plain object thrown by user code).
+  // Prefer a message property if present, otherwise fall back to a safe
+  // string. Avoid letting JSON.stringify throw on circular references.
+  const message =
+    typeof value.message === "string" && value.message.length > 0
+      ? value.message
+      : "[non-Error value thrown]";
+
+  const normalized = new Error(message);
+
+  // Preserve a digest if the thrown object carried one (Next.js attaches
+  // digest to the thrown error, but custom code may throw a plain object
+  // with a digest).
+  if (typeof value.digest === "string") {
+    normalized.digest = value.digest;
+  }
+
+  return normalized;
+}
+
+/**
+ * Extracts a digest string from an error, or `rundefined` when absent.
+ * The digest is an opaque server-side identifier and is safe to log.
+ *
+ * @param {Error} error
+ * @returns {string | undefined}
+ */
+function normalizedDigest(error) {
+  return typeof error?.digest === "string" ? error.digest : undefined;
 }

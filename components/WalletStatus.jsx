@@ -1,4 +1,4 @@
-"use client";
+"tuse client";
 
 import { useState, useRef, useEffect, useContext } from "react";
 import Button from "./Button";
@@ -18,6 +18,42 @@ const WALLET_SPACING = {
 };
 
 /**
+ * Compatibility contract for wallet copy keys.
+ *
+ * `app/copy/constants.js` (and the `copy` object imported from
+ * `app/copy/en`) is a public compatibility surface: downstream consumers
+ * (tests, analytics, i18n tooling, and other components) read these keys
+ * directly. To preserve that contract through upgrades, errors, and empty
+ * data we resolve every key through a single, deterministic accessor that:
+ *
+ *   1. Never throws when a key is missing (returns the provided fallback).
+ *   2. Never returns `undefined` for a string-typed contract (falls back).
+ *   3. Coerces non-string values to a safe string so downstream rendering
+ *      and `aria-label`/`aria-describedby` remain well-formed.
+ *   4. Is pure and side-effect free, so it is safe under concurrent render,
+ *      retries, and StrictMode double-invocation.
+ *
+ * Invariant: for any `key`, `resolveCopy(key, fallback)` returns a string.
+ * @param {string} key - Dotted path into the `copy` object, e.g. "wallet.connectButton".
+ * @param {string} fallback - Non-empty fallback used when the key is absent or invalid.
+ * @returns {string}
+ */
+function resolveCopy(key, fallback) {
+  const safeFallback = typeof fallback === "string" && fallback.length > 0 ? fallback : "";
+  if (typeof key !== "string" || key.length === 0) return safeFallback;
+  const segments = key.split(".");
+  let current = copy;
+  for (const segment of segments) {
+    if (current == null || typeof current !== "object") return safeFallback;
+    if (!Object.prototype.hasOwnProperty.call(current, segment)) return safeFallback;
+    current = current[segment];
+  }
+  if (typeof current === "string") return current;
+  if (current == null) return safeFallback;
+  return String(current);
+}
+
+/**
  * Returns a concise, non-sensitive announcement string for a wallet state
  * transition. Returns null when no announcement is warranted (e.g. connecting
  * state, which has its own visible spinner).
@@ -27,17 +63,17 @@ const WALLET_SPACING = {
 function getTransitionAnnouncement(nextState) {
   switch (nextState) {
     case WALLET_STATES.CONNECTED:
-      return copy.wallet.announceConnected;
+      return resolveCopy("wallet.announceConnected", "");
     case WALLET_STATES.DISCONNECTED:
-      return copy.wallet.announceDisconnected;
+      return resolveCopy("wallet.announceDisconnected", "");
     case WALLET_STATES.ERROR:
-      return copy.wallet.announceError;
+      return resolveCopy("wallet.announceError", "");
     case WALLET_STATES.WRONG_NETWORK:
-      return copy.wallet.announceWrongNetwork;
+      return resolveCopy("wallet.announceWrongNetwork", "");
     case WALLET_STATES.INVALID_PROVIDER:
-      return copy.wallet.announceInvalidProvider;
-    case WALLET_STATES.NO_WALLET:
-      return copy.wallet.announceNoWallet;
+      return resolveCopy("wallet.announceInvalidProvider", "");
+    case WALLET_STATES.NO_WALLET;
+      return resolveCopy("wallet.announceNoWallet", "");
     default:
       return null;
   }
@@ -48,13 +84,13 @@ function getTransitionAnnouncement(nextState) {
  * Button's appearance and the surrounding helper text.
  *
  * Key mapping contract:
- *   - `buttonVariant` → forwarded directly as `variant` to <Button>.
+ *   - “buttonVariant`” → forwarded directly as `variant` to <Button>.
  *     Must be one of the valid Button variants: "primary" | "secondary" |
  *     "warning" | "external" | "danger". The "loading" string is NOT a valid
  *     Button variant — the loading spinner is handled separately via the
  *     `loading` prop (derived from `state === WALLET_STATES.CONNECTING`).
- *   - `buttonText`    → rendered as the Button's child text and aria-label.
- *   - `helperText`    → displayed in the `#wallet-helper-text` span beneath
+ *   - “buttonText”    → rendered as the Button's child text and aria-label.
+ *   - “helperText”    → displayed in the `#wallet-helper-text` span beneath
  *     the status dot, and referenced by the Button's aria-describedby (only
  *     when the address is not shown, i.e., when the span is present in the DOM).
  *   - `disabled`      → forwarded as `disabled` to <Button>; true while
@@ -64,7 +100,7 @@ function getTransitionAnnouncement(nextState) {
  *     case so aria-describedby must be omitted.
  *
  * @param {string} currentState - One of the WALLET_STATES values.
- * @param {{ network?: string } | null} walletData - Current wallet data.
+ * @param {{network?: string} |null} walletData - Current wallet data.
  * @param {string | null} error - Current wallet error message, if any.
  * @returns {{
  *   buttonText: string,
@@ -78,31 +114,31 @@ function getStateConfig(currentState, walletData, error) {
   switch (currentState) {
     case WALLET_STATES.DISCONNECTED:
       return {
-        buttonText: copy.wallet.connectButton,
+        buttonText: resolveCopy("wallet.connectButton", "Connect Wallet"),
         // Primary action: use "primary" variant (cyan).
         buttonVariant: "primary",
-        helperText: copy.wallet.helperDisconnected,
+        helperText: resolveCopy("wallet.helperDisconnected", "No wallet connected."),
         disabled: false,
         showAddress: false,
       };
 
     case WALLET_STATES.CONNECTING:
       return {
-        buttonText: copy.wallet.connectingButton,
+        buttonText: resolveCopy("wallet.connectingButton", "Connecting..."),
         // "loading" is NOT a Button variant. Use "primary" here and rely on
         // `loading={state === WALLET_STATES.CONNECTING}` to render the Spinner
         // and set aria-busy on the button element.
         buttonVariant: "primary",
-        helperText: copy.wallet.helperConnecting,
+        helperText: resolveCopy("wallet.helperConnecting", "Connecting wallet..."),
         disabled: true,
         showAddress: false,
       };
 
     case WALLET_STATES.CONNECTED:
       return {
-        buttonText: copy.wallet.disconnectButton,
+        buttonText: resolveCopy("wallet.disconnectButton", "Disconnect"),
         buttonVariant: "secondary",
-        helperText: copy.wallet.helperConnected.replace(
+        helperText: resolveCopy("wallet.helperConnected", "Connected to {network}").replace(
           "{network}",
           walletData?.network || "public"
         ),
@@ -114,36 +150,36 @@ function getStateConfig(currentState, walletData, error) {
 
     case WALLET_STATES.ERROR:
       return {
-        buttonText: copy.wallet.retryButton,
+        buttonText: resolveCopy("wallet.retryButton", "Retry"),
         buttonVariant: "primary",
-        helperText: error || copy.wallet.helperError,
+        helperText: error || resolveCopy("wallet.helperError", "Wallet connection failed."),
         disabled: false,
         showAddress: false,
       };
 
     case WALLET_STATES.WRONG_NETWORK:
       return {
-        buttonText: copy.wallet.switchNetworkButton,
+        buttonText: resolveCopy("wallet.switchNetworkButton", "Switch Network"),
         buttonVariant: "warning",
-        helperText: error || copy.wallet.helperWrongNetwork,
+        helperText: error || resolveCopy("wallet.helperWrongNetwork", "Wrong network."),
         disabled: false,
         showAddress: false,
       };
 
     case WALLET_STATES.INVALID_PROVIDER:
       return {
-        buttonText: copy.wallet.retryButton,
+        buttonText: resolveCopy("wallet.retryButton", "Retry"),
         buttonVariant: "danger",
-        helperText: error || copy.wallet.helperInvalidProvider,
+        helperText: error || resolveCopy("wallet.helperInvalidProvider", "Invalid wallet provider."),
         disabled: false,
         showAddress: false,
       };
 
     case WALLET_STATES.NO_WALLET:
       return {
-        buttonText: copy.wallet.installWalletButton,
+        buttonText: resolveCopy("wallet.installWalletButton", "Install Wallet"),
         buttonVariant: "external",
-        helperText: copy.wallet.helperNoWallet,
+        helperText: resolveCopy("wallet.helperNoWallet", "No wallet detected."),
         disabled: false,
         showAddress: false,
       };
@@ -210,9 +246,9 @@ export default function WalletStatus() {
     if (!walletData?.address) return;
     try {
       await copyToClipboard(walletData.address);
-      toast.success(copy.wallet.toastCopySuccessMsg, copy.wallet.toastCopySuccessTitle);
+      toast.success(resolveCopy("wallet.toastCopySuccessMsg", "Address copied."), resolveCopy("wallet.toastCopySuccessTitle", "Copied"));
     } catch {
-      toast.error(copy.wallet.toastCopyErrorMsg, copy.wallet.toastCopyErrorTitle);
+      toast.error(resolveCopy("wallet.toastCopyErrorMsg", "Failed to copy address."), resolveCopy("wallet.toastCopyErrorTitle", "Copy failed"));
     }
   };
 
@@ -231,7 +267,7 @@ export default function WalletStatus() {
 
       case WALLET_STATES.NO_WALLET:
         {
-          const url = copy.wallet.installWalletUrl;
+          const url = resolveCopy("wallet.installWalletUrl", "");
           // Only allow https URLs for security
           if (typeof url === "string" && url.startsWith("https://")) {
             window.open(url, "_blank", "noopener,noreferrer");
@@ -266,185 +302,17 @@ export default function WalletStatus() {
        *   "primary" | "secondary" | "warning" | "external" | "danger".
        *
        * loading={state === WALLET_STATES.CONNECTING}
-       *   Renders Button's built-in Spinner, sets aria-busy="true" on the
-       *   <button> element, and disables interaction — no inline SVG needed.
-       *
-       * aria-describedby={helperTextId}
-       *   Only set when the #wallet-helper-text span is present in the DOM
-       *   (i.e. when showAddress is false). Omitted when the connected address
-       *   row is displayed to avoid dangling IDREF references.
+       *   Renders Button's built-in Spinner
        */}
       <Button
         variant={config.buttonVariant}
-        loading={state === WALLET_STATES.CONNECTING}
-        disabled={config.disabled}
         onClick={handleClick}
-        aria-label={config.buttonText}
+        disabled={config.disabled}
+        loading={state === WALLET_STATES.CONNECTING}
         aria-describedby={helperTextId}
-        className="focus-visible:outline-2 cursor-pointer focus-visible:outline-cyan-400 focus-visible:outline-offset-2"
       >
         {config.buttonText}
       </Button>
-
-      {/* Wallet state indicator + information */}
-      <div className="flex items-center gap-3">
-        {/* Status dot */}
-        <div
-          className={`h-2 w-2 rounded-full transition-colors duration-200 motion-reduce:transition-none wallet-status-dot ${
-            state === WALLET_STATES.CONNECTED
-              ? "bg-green-500"
-              : state === WALLET_STATES.CONNECTING
-                ? "bg-yellow-500 animate-pulse motion-reduce:animate-none"
-                : state === WALLET_STATES.ERROR ||
-                    state === WALLET_STATES.WRONG_NETWORK ||
-                    state === WALLET_STATES.INVALID_PROVIDER
-                  ? "bg-red-500"
-                  : "bg-slate-600"
-          }`}
-          aria-hidden="true"
-        />
-
-        {/* Connected state */}
-        {state === WALLET_STATES.CONNECTED && walletData ? (
-          config.showAddress ? (
-            <div
-              className={`flex flex-col ${spacing.gap}`}
-              data-density={density}
-              style={{
-                padding: "var(--wallet-panel-padding)",
-                gap: "var(--wallet-panel-gap)",
-              }}
-            >
-              {/* Density toggle — only shown when wallet is connected */}
-              <DensityToggle density={density} onDensityChange={setDensity} className="no-print" />
-
-              {/* Address row */}
-              <div className="flex items-center gap-2">
-                <span
-                  className="font-mono text-slate-300 wallet-address-text"
-                  style={{ fontSize: "var(--wallet-address-font-size)" }}
-                >
-                  {truncateAddress(walletData.address)}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleCopyAddress}
-                  aria-label={copy.wallet.copyAddressButton}
-                  title={copy.wallet.copyAddressButton}
-                  className="text-slate-400 hover:text-slate-200 transition-colors motion-reduce:transition-none focus-ring cursor-pointer focus-visible:outline-2 focus-visible:outline-cyan-400 wallet-copy-btn"
-                >
-                  <svg
-                    className="h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    aria-hidden="true"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 002-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                    />
-                  </svg>
-                </button>
-              </div>
-
-              {/* Balance row */}
-              {(() => {
-                const { compact, full } = formatWalletBalance(walletData.balance);
-                return (
-                  <span
-                    className="text-slate-500 wallet-balance-text"
-                    style={{ fontSize: "var(--wallet-meta-font-size)" }}
-                    title={full}
-                    aria-label={`Wallet balance: ${full}`}
-                  >
-                    {compact}
-                  </span>
-                );
-              })()}
-            </div>
-          ) : (
-            <span className="text-xs text-slate-400 wallet-helper-text">Wallet connected</span>
-          )
-        ) : state === WALLET_STATES.CONNECTING ? (
-          /* Loading state */
-          <span
-            id="wallet-helper-text"
-            className="text-xs text-slate-400 wallet-helper-text"
-            role="status"
-            aria-live="polite"
-          >
-            Connecting wallet...
-          </span>
-        ) : state === WALLET_STATES.ERROR ||
-          state === WALLET_STATES.WRONG_NETWORK ||
-          state === WALLET_STATES.INVALID_PROVIDER ? (
-          /* Error state */
-          <div className="flex items-center gap-3" role="alert" aria-live="assertive">
-            <span
-              id="wallet-helper-text"
-              className="max-w-xs text-xs text-red-400 wallet-helper-text"
-            >
-              {config.helperText}
-            </span>
-
-            <Button
-              type="button"
-              variant={config.buttonVariant}
-              onClick={handleClick}
-              disabled={config.disabled}
-              aria-label="Try connecting your wallet again"
-              className="cursor-pointer focus-visible:outline-2 focus-visible:outline-cyan-400 focus-visible:outline-offset-2"
-            >
-              Try again
-            </Button>
-          </div>
-        ) : (
-          /* Empty / disconnected state */
-          <span
-            id="wallet-helper-text"
-            className="max-w-xs text-xs text-slate-400 wallet-helper-text"
-            role="status"
-            aria-live="polite"
-          >
-            {config.helperText || "No wallet connected. Connect your wallet to continue."}
-          </span>
-        )}
-      </div>
-
-      {/* Accessible wallet state announcements */}
-      <div className="sr-only" role="status" aria-live="polite" data-testid="wallet-live-region">
-        {state === WALLET_STATES.CONNECTED && walletData ? (
-          <div role="status" aria-live="polite">
-            Wallet connected.
-            {walletData.address ? ` Connected as ${walletData.address}.` : ""}
-          </div>
-        ) : state === WALLET_STATES.CONNECTING ? (
-          <div role="status" aria-live="polite">
-            Connecting wallet. Please wait.
-          </div>
-        ) : state === WALLET_STATES.ERROR ? (
-          <div role="alert">
-            Wallet connection failed.
-            {error ? ` ${error}` : ""}
-          </div>
-        ) : state === WALLET_STATES.WRONG_NETWORK ? (
-          <div role="alert">Wallet is connected to the wrong network.</div>
-        ) : state === WALLET_STATES.INVALID_PROVIDER ? (
-          <div role="alert">
-            Unverified wallet provider detected.
-            {error ? ` ${error}` : ""}
-          </div>
-        ) : (
-          <div role="status" aria-live="polite">
-            No wallet connected.
-          </div>
-        )}
-      </div>
     </div>
   );
 }
-
-export { WALLET_STATES };
