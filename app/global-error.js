@@ -24,8 +24,22 @@ import { copy } from "./copy/en";
  */
 export default function GlobalLayoutError({ error, reset }) {
   useEffect(() => {
-    reportError(error, { digest: error?.digest, boundary: "global-layout" });
+    // Observability must never replace the recovery UI with a second error.
+    try {
+      reportError(error, { digest: error?.digest, boundary: "global-layout" });
+    } catch {
+      // Keep the boundary renderable when the reporting transport is down.
+    }
   }, [error]);
+
+  const handleReset = () => {
+    try {
+      reset();
+    } catch {
+      // A failed remount still needs a deterministic recovery path.
+      if (typeof window !== "undefined") window.location.reload();
+    }
+  };
 
   return (
     <html lang="en">
@@ -72,7 +86,7 @@ export default function GlobalLayoutError({ error, reset }) {
           <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
             <button
               type="button"
-              onClick={() => reset()}
+              onClick={handleReset}
               data-testid="global-error-reset"
               style={{
                 padding: "0.75rem 1.5rem",

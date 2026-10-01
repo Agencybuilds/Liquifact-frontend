@@ -4,6 +4,12 @@ import { useEffect, useRef } from "react";
 import ErrorBanner from "@/components/ErrorBanner";
 import { copy } from "@/app/copy/en";
 
+export function getInvestErrorMessage(error) {
+  return error && typeof error.message === "string" && error.message.trim()
+    ? error.message
+    : copy.error?.description || "Please try again.";
+}
+
 export default function InvoiceDetailError({ error, reset }) {
   const reportedRef = useRef(new WeakSet());
   const resettingRef = useRef(false);
