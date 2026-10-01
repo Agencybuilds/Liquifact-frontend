@@ -5,7 +5,8 @@
  * Strategy:
  *  - Render the component directly; next/link is already mocked in __mocks__
  *    to a plain <a> tag so href assertions are straightforward.
- *  - Cover copy strings, link target, ARIA structure, and a11y.
+ *  - Cover copy strings, link target, ARIA structure, a11y, and the
+ *    compatibility contract for the /invest/[id] not-found boundary.
  */
 import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";

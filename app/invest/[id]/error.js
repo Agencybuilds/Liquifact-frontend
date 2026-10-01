@@ -1,15 +1,30 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+// @ts-check
+
+import { useEffect } from "react";
 import ErrorBanner from "@/components/ErrorBanner";
 import { copy } from "@/app/copy/en";
 
-export function getInvestErrorMessage(error) {
-  return error && typeof error.message === "string" && error.message.trim()
-    ? error.message
-    : copy.error?.description || "Please try again.";
-}
+const DEFAULT_TITLE = copy.error?.title || "Something went wrong";
+const DEFAULT_DESCRIPTION = copy.error?.description || "An unexpected error occurred. Please try again.";
 
+/** @param {unknown} message */
+const isSafeMessage = (message) =>
+  typeof message === "string" && message.trim().length > 0;
+
+/** @param {unknown} error */
+const getSafeDescription = (error) => {
+  const message = error && typeof error === "object" ? error.message : undefined;
+
+  if (!isSafeMessage(message)) {
+    return DEFAULT_DESCRIPTION;
+  }
+
+  return message;
+};
+
+/** @param {{ error: Error & { message?: string }, reset: () => void }} props */
 export default function InvoiceDetailError({ error, reset }) {
   const reportedRef = useRef(new WeakSet());
   const resettingRef = useRef(false);
@@ -26,33 +41,20 @@ export default function InvoiceDetailError({ error, reset }) {
     console.error(error);
   }, [error]);
 
-  // Idempotent reset: guard against concurrent or repeated invocations so a
-  // double-click or racing retry cannot trigger overlapping recoveries.
-  const handleReset = () => {
-    if (resettingRef.current) {
-      return;
-    }
-    resettingRef.current = true;
-    try {
-      reset();
-    } finally {
-      // Yield to the next microtask so the guard covers the entire reset
-      // cycle without blocking future legitimate retries.
-      Promise.resolve().then(() => {
-        resettingRef.current = false;
-      });
-    }
-  };
+  const description = getSafeDescription(error);
+
+  /** @type {boolean} */
+  const canReset = typeof reset === "function";
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6">
       <main className="max-w-4xl mx-auto py-12" id="main-content">
         <ErrorBanner
           variant="server"
-          title={copy.error?.title || "Something went wrong"}
-          description={error?.message || copy.error?.description}
-          actionLabel={copy.error?.actionLabel}
-          onAction={handleReset}
+          title={DEFAULT_TITLE}
+          description={description}
+          actionLabel={canReset ? copy.error?.actionLabel : undefined}
+          onAction={canReset ? reset : undefined}
         />
       </main>
     </div>

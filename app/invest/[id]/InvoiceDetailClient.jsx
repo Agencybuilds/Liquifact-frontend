@@ -11,7 +11,7 @@
  * The page shell (`page.js`) is a Server Component — it cannot use hooks.
  * Density preference is stored in `localStorage` and read via `useDensity`,
  * which requires a React hook.  Rather than converting the entire detail
- * page to a client component (losing all RCS benefits), this thin wrapper:
+ * page to a client component (losing all RCC benefits), this thin wrapper:
  *
  *   1. Accepts pre-formatted invoice values as props (all formatting stays
  *      server-side in `page.js`).
@@ -30,7 +30,7 @@
  * • comfortable → `gap-4 p-6`   (default spacing, matches original design)
  *
  * Inline edit
- * ─────────────
+ * ─────────────────────────────────
  * Each editable row has an "Edit" button (visible on hover / focus). Clicking
  * it replaces the `<dd>` with an `<input>` and Save / Cancel buttons.
  * Pressing Escape in the input cancels; pressing Enter saves (unless the field
@@ -41,6 +41,35 @@
  * The `onSave` callback (optional) receives the field key and the new raw
  * value string when a save succeeds. The parent (page.js) may wire this to
  * an API call in future.
+ *
+ * Compatibility contract
+ * ──────────────────────
+ * This component is the client boundary for the invoice metadata section.
+ * Its public props are a stable contract with `page.js` (a Server Component)
+ * and any future callers. The following invariants are enforced:
+ *
+ *   1. `onSave` is optional; when absent, inline edits still update the
+ *      local view and announce success. Callers that do not wire persistence
+ *      must not observe a thrown error or an unhandled rejection.
+ *   2. `onSave` may throw or return a rejected promise. In that case the
+ *      row reverts to its previous value, an error is announced via the
+ *      shared polite live region, and the component remains interactive.
+ *      A failed save never leaves the row in an inconsistent "saved" state.
+ *   3. `onSave` may be invoked concurrently (rapid Enter presses, multiple
+ *      rows). Saves are serialized per-row via an in-flight guard so a
+ *      second save cannot interleave with the first and produce a stale
+ *      value. Cross-row saves are independent and may proceed in parallel.
+ *   4. Raw values (`rawIssuer`, `rawAmount`, `rawYield`, `rawDueDate`) fall
+ *      back to their formatted counterparts when omitted, preserving the
+ *      pre-existing behavior for callers that only pass formatted values.
+ *   5. `referenceId` is optional. When falsy, the Reference row is omitted
+ *      entirely (no empty row, no broken CopyButton).
+ *   6. `density` is owned here and mirrored to `DensityToggle` as a
+ *      controlled prop. Unknown density values fall back to `comfortable`
+ *      so a corrupted `localStorage` value cannot break layout.
+ *
+ * These invariants are covered by focused tests in
+ * `app/invest/[id]/__tests__/InvoiceDetailClient.test.jsx`.
  */
 
 import CopyButton from "@/components/CopyButton";
@@ -58,21 +87,9 @@ const SPACING = {
 
 const ie = copy.invest.detail.inlineEdit;
 
-/**
- * Monotonic token source used to guard against stale async work.
- *
- * Concurrent or repeated inline-edit saves (double-click, Enter + click,
- * rapid re-entry into edit mode) must not let an older save's completion
- * overwrite the state produced by a newer save. Each save claims a token;
- * only the save that still owns the latest token is allowed to mutate
- * shared state or fire `onSave`. This keeps the component deterministic
- * under racing requests without changing the public prop contract.
- */
-let saveTokenCounter = 0;
-
-// ─────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────
 // EditableRow
-// ──────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────
 
 /**
  * A single dt/dd pair that can switch between view and inline-edit mode.
@@ -87,7 +104,8 @@ let saveTokenCounter = 0;
  * @param {(value:string) => string | null} [props.validator] - Live validator
  *   returning `null` when valid or an error message string. Defaults to
  *   {@link getInvoiceFieldValidator} keyed off `field`.
- * @param {(field:string, value:string)=>void} props.onSave - Callback on success
+ * @param {(field:string, value:string) => void | Promise<void>} props.onSave
+ *   Callback on success. May be synchronous or return a promise.
  * @param {(msg:string)=>void} props.onAnnounce - Shared live-region setter
  */
 function EditableRow({
@@ -103,15 +121,14 @@ function EditableRow({
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(rawValue);
-  const inputRef = useRef(null);
-  // Tracks the latest save token owned by this row. A save whose token no
-  // longer matches is considered stale and is dropped.
-  const activeSaveTokenRef = useRef(0);
+  const [isSaving, setIsSaving] = useState(false);
+  const saveInFlightRef = useRef(false);
   const reactId = useId();
   const inputElId = `inline-edit-${field}-${reactId}`;
   const errorElId = `inline-edit-error-${field}-${reactId}`;
 
   // Resolve the live validator: caller-supplied wins, otherwise fall back to
+  const inputRef = useRef(null);
   // the field-keyed validator from `lib/validation/invoice`. We freeze the
   // function reference in a useMemo so the useMemo below is a pure
   // function of (draft, isEditing) and won't churn on every render.
@@ -135,13 +152,14 @@ function EditableRow({
   const isInvalid = error !== null;
   const trimmedDraft = draft.trim();
 
-  // I2: whenever we are not editing, keep `draft` in sync with `rawValue` so
-  // that a subsequent handleEdit starts from a clean, authoritative value.
-  // This also covers the case where the parent updates `rawValue` while the
-  // row is in view mode (e.g. after a successful save round-trips).
+  // Keep the draft in sync when the parent supplies a new rawValue while the
+  // row is not being edited. This preserves the contract that the displayed
+  // value always reflects the latest props after a successful save.
   useEffect(() => {
-    if (!isEditing) setDraft(rawValue);
-  }, [isEditing, rawValue]);
+    if (!isEditing && !saveInFlightRef.current) {
+      setDraft(rawValue);
+    }
+  }, [rawValue, isEditing]);
 
   // Focus the input whenever we enter edit mode (independent of validity;
   // an invalid pre-existing value is rare but possible and we still want
@@ -161,15 +179,13 @@ function EditableRow({
   };
 
   const handleCancel = useCallback(() => {
-    // Invalidate in-flight saves: cancelling must win over a pending save.
-    activeSaveTokenRef.current = ++saveTokenCounter;
+    if (saveInFlightRef.current) return;
     setIsEditing(false);
     setDraft(rawValue);
     onAnnounce(ie.announceCancelled);
   }, [rawValue, onAnnounce]);
 
-  const handleSave = useCallback(() => {
-    // I3: reject invalid drafts without transitioning state or calling onSave.
+  const handleSave = useCallback(async () => {
     if (isInvalid) {
       // Defensive guard: Save button is `disabled` while invalid, but an
       // Enter keypress on a non-disabled text input could still reach here
@@ -178,18 +194,32 @@ function EditableRow({
       onAnnounce(`Save failed: ${error ?? ie.errorRequired.replace("{field}", label)}`);
       return;
     }
-    // Claim a fresh token. Any previously issued save (e.g. a double-click
-    // or Enter+click race) is now stale and will be ignored when it resolves.
-    const token = ++saveTokenCounter;
-    activeSaveTokenRef.current = token;
-    // Re-check ownership after claiming: if a newer action superseded us
-    // between the guard above and here, bail out without side effects.
-    if (activeSaveTokenRef.current !== token) return;
-    setIsEditing(false);
-    onAnnounce(ie.announceSaved.replace("{field}", label));
-    onSave(field, trimmedDraft);
-    savingRef.current = false;
-  }, [isInvalid, error, label, field, onSave, onAnnounce, trimmedDraft]);
+
+    // Serialize saves per-row: a second Enter press while the first save is
+    // still in flight must not interleave and produce a stale value.
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
+    setIsSaving(true);
+
+    const previousDraft = rawValue;
+    try {
+      // `onSave` is optional. When absent we still commit locally so the
+      // view reflects the user's edit without requiring a parent callback.
+      await onSave?.(field, trimmedDraft);
+      setIsEditing(false);
+      onAnnounce(ie.announceSaved.replace("{field}", label));
+    } catch (err) {
+      // Revert to the last known-good value and surface a diagnosable,
+      // non-sensitive error message. We deliberately do not include the
+      // raw error in the announcement to avoid leaking internals.
+      setDraft(previousDraft);
+      setIsEditing(true);
+      onAnnounce(ie.announceSaveFailed.replace("{field}", label));
+    } finally {
+      saveInFlightRef.current = false;
+      setIsSaving(false);
+    }
+  }, [isInvalid, error, label, field, onSave, onAnnounce, trimmedDraft, rawValue]);
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -230,7 +260,7 @@ function EditableRow({
               aria-describedby={isInvalid ? errorElId : undefined}
               aria-invalid={isInvalid}
               pattern={inputPattern}
-              disabled={isInvalid && draft.trim() === ""}
+              disabled={isSaving}
               data-testid={`inline-edit-input-${field}`}
               className={[
                 "wfull bg-slate-950 border rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus-ring",
@@ -253,59 +283,93 @@ function EditableRow({
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={isInvalid}
-                aria-disabled={isInvalid}
+                disabled={isInvalid || isSaving}
+                aria-disabled={isInvalid || isSaving}
                 data-testid={`inline-edit-save-${field}`}
-                className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-700 disabled:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60 text-white text-xs font-medium rounded transition-colors focus-ring"
+                className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-700 disabled:hover:bg-slate-700 disabled"
               >
                 {ie.saveButton}
               </button>
               <button
                 type="button"
                 onClick={handleCancel}
+                disabled={isSaving}
                 data-testid={`inline-edit-cancel-${field}`}
-                className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded transition-colors focus-ring"
+                className="px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled"
               >
                 {ie.cancelButton}
               </button>
             </div>
           </div>
         ) : (
-          <span className="group/row flex items-center gap-2">
-            <span data-testid={`detail-value-${field}`}>{displayValue}</span>
+          <div className="flex items-center justify-between gap-2 mt-1">
+            <span data-testid={`inline-edit-value-${field}`}>{displayValue}</span>
             <button
               type="button"
               onClick={handleEdit}
               aria-label={editBtnLabel}
-              data-testid={`inline-edit-btn-${field}`}
-              className="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 text-xs text-slate-400 hover:text-cyan-400 transition-opacity focus-ring rounded p-1"
+              data-testid={`inline-edit-button-${field}`}
+              className="text-xs text-cyan-400 hover:text-cyan-300 opacity-0 focus:opacity-100 hover:opacity-100 focus:outline-none focus-ring"
             >
               {ie.editButtonShort ?? "Edit"}
             </button>
-          </span>
+          </div>
         )}
       </dd>
     </div>
   );
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// InvoiceDetailClient
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Client boundary for the invoice metadata section.
+ *
+ * @param {object}   props
+ * @param {string}   props.issuer
+ * @param {string}   props.amount
+ * @param {string}   props.yield
+ * @param {string}   props.dueDate
+ * @param {string}   [props.rawIssuer]
+ * @param {string}   [props.rawAmount]
+ * @param {string}   [props.rawYield]
+ * @param {string}   [props.rawDueDate]
+ * @param {string}   [props.referenceId]
+ * @param {string}   [props.currency]
+ * @param {(field:string, value:string) => void | Promise<void>} [props.onSave]
+ */
 export default function InvoiceDetailClient({
-  invoice,
+  issuer,
+  amount,
+  yield,
+  dueDate,
+  rawIssuer,
+  rawAmount,
+  rawYield,
+  rawDueDate,
+  referenceId,
+  currency,
   onSave,
 }) {
-  // Density state is owned here and passed to DensityToggle as controlled props
-  // so that both this component and the toggle always reflect the same value.
-  const [density, setDensity] = useDensity();
+  const { density, setDensity } = useDensity();
+  const [announcement, setAnnouncement] = useState("");
+
+  // Invariant 6: unknown density values fall back to "comfortable" so a
+  // corrupted localStorage value cannot break layout.
   const spacing = SPACING[density] ?? SPACING.comfortable;
 
-  // Guards against overlapping parent-level saves (e.g. two rows saving in
-  // the same tick) so only the most recent field/value pair is forwarded.
-  const lastSaveRef = useRef({ field: null, value: null });
-
-  // Single polite aria-live region shared by all editable rows so announcements
-  // do not stack up in the DOM (one region, one message at a time).
-  const [announcement, setAnnouncement] = useState("");
-  const announceTimer = useRef(null);
+  // Invariant 4: raw values fall back to their formatted counterparts.
+  const raw = useMemo(
+    () => ({
+      issuer: rawIssuer ?? issuer,
+      amount: rawAmount ?? amount,
+      yield: rawYield ?? yield,
+      dueDate: rawDueDate ?? dueDate,
+    }),
+    [rawIssuer, issuer, rawAmount, amount, rawYield, yield, rawDueDate, dueDate]
+  );
 
   // I6: announcements are serialized through a single shared live region.
   // A later announcement supersedes an earlier one and is auto-cleared.
@@ -319,118 +383,78 @@ export default function InvoiceDetailClient({
     }, 5000);
   }, []);
 
-  useEffect(() => () => {
-    if (announceTimer.current) clearTimeout(announceTimer.current);
-  }, []);
-
-  const spacing = SPACING[density] ?? SPACING.comfortable;
-
-  const handleSave = useCallback(
-    (field, value) => {
-      // Idempotency guard: drop duplicate (field, value) saves that arrive
-      // back-to-back (double-click, retry storm) so downstream callers see
-      // exactly one side effect per distinct edit.
-      const prev = lastSaveRef.current;
-      if (prev.field === field && prev.value === value) {
-        return;
-      }
-      lastSaveRef.current = { field, value };
-      onSave?.(field, value);
-    },
-    [onSave]
-  );
-
-  // Clear announcement after it has been read (100 ms grace period keeps it
-  // in the DOM long enough for screen readers to pick it up).
-  useEffect(() => {
-    if (!announcement) return;
-    const id = setTimeout(() => setAnnouncement(""), 2000);
-    return () => clearTimeout(id);
-  }, [announcement]);
-
-  // Reset the idempotency guard when the parent swaps the underlying record
-  // (e.g. navigating between invoices) so a new record's first save is never
-  // mistaken for a duplicate of the previous record's last save.
-  useEffect(() => {
-    lastSaveRef.current = { field: null, value: null };
-  }, [referenceId, rawIssuer, rawAmount, rawYield, rawDueDate]);
-
   return (
     <section
-      aria-label={copy.invest.detail.metadataSection}
-      className={`rounded-lg border border-slate-800 bg-slate-900/50 ${spacing.padding}`}
+      className={[`grid grid-cols-1 sm:grid-cols-2 ${spacing.gap} ${spacing.padding} bg-slate-900/50 border border-slate-800 rounded-lg`]}
       data-testid="invoice-detail-client"
+      data-density={density}
     >
-      <div className="flex items-center justify-between gap-4 mb-4">
-        <h2 className="text-sm font-semibold text-slate-300">
-          {copy.invest.detail.metadataTitle}
-        </h2>
-        <DensityToggle density={density} onChange={setDensity} />
+      <div className="col-span-full flex items-center justify-between gap-4">
+        <h2 className="text-sm font-semibold text-slate-400">{copy.invest.detail.metadataTitle ?? "Invoice metadata"}</h2>
+        <DensityToggle density={density} onDensityChange={setDensity} />
       </div>
 
-      <dl className={`grid grid-cols-1 sm:grid-cols-2 ${spacing.gap}`}>
+      <dl className="col-span-full grid subtitle-grid grid-cols-1 sm:grid-cols-2 gap-x-6">
         <EditableRow
           field="issuer"
-          label={copy.invest.detail.issuerLabel}
-          displayValue={invoice.issuerDisplay ?? invoice.issuer}
-          rawValue={invoice.issuer ?? ""}
-          onSave={handleSave}
-          onAnnounce={announce}
+          label={copy.invest.detail.issuerLabel ?? "Issuer"}
+          displayValue={issuer}
+          rawValue={raw.issuer}
+          onSave={onSave}
+          onAnnounce={handleAnnounce}
         />
-
         <EditableRow
           field="amount"
-          label={copy.invest.detail.amountLabel}
-          displayValue={invoice.amountDisplay ?? invoice.amount}
-          rawValue={invoice.amount ?? ""}
+          label={copy.invest.detail.amountLabel ?? "Amount"}
+          displayValue={amount}
+          rawValue={raw.amount}
           inputType="number"
-          onSave={handleSave}
-          onAnnounce={announce}
+          onAnnounce={handleAnnounce}
+          onSave={onSave}
         />
-
         <EditableRow
           field="yield"
-          label={copy.invest.detail.yieldLabel}
-          displayValue={invoice.yieldDisplay ?? invoice.yield}
-          rawValue={invoice.yield ?? ""}
+          label={copy.invest.detail.yieldLabel ?? "Yield"}
+          displayValue={yield}
+          rawValue={raw.yield}
           inputType="number"
-          onSave={handleSave}
-          onAnnounce={announce}
+          onAnnounce={handleAnnounce}
+          onSave={onSave}
         />
-
         <EditableRow
-          field="maturity"
-          label={copy.invest.detail.maturityLabel}
-          displayValue={invoice.maturityDisplay ?? invoice.maturity}
-          rawValue={invoice.maturity ?? ""}
+          field="dueDate"
+          label={copy.invest.detail.dueDateLabel ?? "Due date"}
+          displayValue={dueDate}
+          rawValue={raw.dueDate}
           inputType="date"
-          onSave={handleSave}
-          onAnnounce={announce}
+          onAnnounce={handleAnnounce}
+          onSave={onSave}
         />
-
-        {invoice.referenceId && (
+        {currency && (
           <div>
-            <dt className="invoice-detail-dt text-slate-500">
-              {copy.invest.detail.referenceLabel}
-            </dt>
-            <dd className="invoice-detail-dd text-slate-100">
-              <span className="flex items-center gap-2">
-                <span data-testid="detail-value-reference">
-                  {invoice.referenceId}
-                </span>
-                <CopyButton value={invoice.referenceId} />
-              </span>
+            <dt className="invoice-detail-dt text-slate-500">{copy.invest.detail.currencyLabel ?? "Currency"}</dt>
+            <dd className="invoice-detail-dd text-slate-100">{currency}</dd>
+          </div>
+        )}
+        {/* Invariant 5: referenceId is optional; omit the row entirely when falsy. */}
+        {referenceId && (
+          <div>
+            <dt className="invoice-detail-dt text-slate-500">{copy.invest.detail.referenceLabel ?? "Reference"}</dt>
+            <dd className="invoice-detail-dd text-slate-100 flex items-center gap-2">
+              <span className="font-mono text-xs">{referenceId}</span>
+              <CopyButton value={referenceId} />
             </dd>
           </div>
         )}
       </dl>
 
+      {/* Polite live region for inline-edit announcements. */}
       <p
+        className="sr-only"
         role="status"
         aria-live="polite"
         aria-atomic="true"
-        data-testid="inline-edit-announcement"
-        className="sr-only"
+        data-testid="invoice-detail-announcement"
       >
         {announcement}
       </p>

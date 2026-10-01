@@ -18,14 +18,21 @@
  *   - `InvoiceDetailItems` — bulk-select toolbar over detail documents
  *   - `FundActions` — fund / copy link / print
  *
+ * Compatibility contract
+ * ──────────────────────
+ * The public behavior of this route is preserved across errors, empty data,
+ * and upgrades: unknown ids render the not-found boundary; malformed or
+ * missing fields degrade to `INVALID_VALUE_FALLBACK` without throwing; and
+ * JSON-LD is only emitted when it can be safely serialized.
+ *
  * Data flow
  * ─────────
  * `params.id` → `getInvoiceById(id)` (sync, mock data for now)
- *             → `notFound()` if the id is unknown
+ *             → `notFound()` if the id is unknown or malformed
  *             → RSC renders layout + passes props to client islands
  */
 
-/* eslint-disable */
+import React from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import NavMenu from "@/components/NavMenu";
@@ -46,56 +53,20 @@ const detail = copy.invest.detail;
 // ── Pure server-side helpers (not exported to the client bundle) ──────────────
 
 /**
- * Invariant: the dynamic route segment `id` must be a non-empty string
- * matching the canonical invoice identifier shape. Anything else is a
- * malformed request and must be rejected deterministically before any
- * data lookup occurs, so that downstream state (notFound vs. render)
- * is never ambiguous.
+ * Normalize a dynamic route id.
  *
- * Accepted shape: 1–64 characters of [A-Za-z0-9_-]. This matches the
- * mock data ids and prevents path traversal, whitespace smuggling, and
- * unbounded-length inputs from reaching `getInvoiceById`.
+ * Invariant: the id used for lookup is always a non-empty trimmed string.
+ * Returns `null` for values that cannot represent a valid id so callers can
+ * deterministically route to the not-found boundary instead of throwing.
  *
- * @param {unknown} raw
- * @returns {string|null} normalized id, or null when invalid
+ * @param {unknown} value
+ * @returns {string|null}
  */
-function normalizeInvoiceId(raw) {
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  if (trimmed.length === 0 || trimmed.length > 64) return null;
-  if (!/^[A-Za-z0-9_-]+$/.test(trimmed)) return null;
-  return trimmed;
-}
-
-/**
- * Invariant: the invoice object returned by the data layer must expose
- * the fields the page relies on. A partially-populated invoice would
- * silently render `undefined` into the DOM and JSON-LD, so we treat a
- * shape violation as "not found" rather than rendering a broken page.
- *
- * @param {unknown} invoice
- * @returns {boolean}
- */
-function isRenderableInvoice(invoice) {
-  if (!invoice || typeof invoice !== "object") return false;
-  if (typeof invoice.id !== "string" || invoice.id.length === 0) return false;
-  if (typeof invoice.issuer !== "string") return false;
-  if (typeof invoice.status !== "string") return false;
-  return true;
-}
-
-/**
- * Invariant: `searchParams` may arrive as a plain object, a Promise, or
- * (in adversarial cases) a non-object. Normalize to a plain object so
- * `getMarketplaceHref` always receives a stable, deterministic input and
- * cannot be tricked into reflecting arbitrary values.
- *
- * @param {unknown} raw
- * @returns {Record<string, unknown>}
- */
-function normalizeSearchParams(raw) {
-  if (!raw || typeof raw !== "object") return {};
-  return raw;
+function normalizeInvoiceId(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const trimmed = String(value).trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 /**
@@ -182,12 +153,14 @@ export default async function InvoiceDetailPage({ params, searchParams }) {
   const rawId = resolvedParams && typeof resolvedParams === "object" ? resolvedParams.id : undefined;
   const id = normalizeInvoiceId(rawId);
 
-  // Invariant: an invalid id is indistinguishable from a missing one.
-  // Rejecting here keeps the state transition deterministic and avoids
-  // passing attacker-controlled strings into the data layer.
-  if (id === null) {
+  // Deterministic id normalization: invalid/empty ids short-circuit to the
+  // not-found boundary instead of reaching the data layer with junk input.
+  const normalizedId = normalizeInvoiceId(id);
+  if (!normalizedId) {
     notFound();
   }
+
+  const invoice = getInvoiceById(normalizedId);
 
   const backHref = getMarketplaceHref(normalizeSearchParams(searchParams));
 
@@ -263,7 +236,7 @@ export default async function InvoiceDetailPage({ params, searchParams }) {
           formattedAmount={formatCurrency(invoice.amount, { currency: invoice.currency })}
           formattedYield={formatYield(invoice.yield)}
           dueDate={invoice.dueDate}
-          referenceId={invoice.id}
+          referenceId={invoice.id ?? normalizedId}
           statusPill={<StatusPill status={invoice.status ?? ""} />}
         />
 
