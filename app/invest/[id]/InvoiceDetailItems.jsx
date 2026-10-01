@@ -18,7 +18,7 @@
  * Selection auto-prunes when items are deleted (via `useBulkSelection`).
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import BulkActionsToolbar from "@/components/BulkActionsToolbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import useBulkSelection, { ALL_STATES } from "@/lib/hooks/useBulkSelection";
@@ -229,6 +229,24 @@ export default function InvoiceDetailItems({
     reportRejected(rejected);
   }
 
+  /**
+   * Concurrency guards.
+   *
+   * `deleteInFlightRef` prevents duplicate delete work when the confirm
+   * handler is invoked more than once (double-click, retry, or a second
+   * dialog confirmation racing the first). The ref is the source of truth
+   * for "is a delete currently executing" so that stale React state cannot
+   * allow a second concurrent run.
+   *
+   * `deleteRunIdRef` is a monotonically increasing token. Each delete run
+   * captures the current token; when the async work resolves, the run only
+   * commits its state mutation if its token is still the latest. This makes
+   * late-resolving runs idempotent and prevents them from clobbering newer
+   * state (e.g. items re-added by the parent between runs).
+   */
+  const deleteInFlightRef = useRef(false);
+  const deleteRunIdRef = useRef(0);
+
   const {
     selectedIds,
     selectedCount,
@@ -265,26 +283,43 @@ export default function InvoiceDetailItems({
       setPendingDeleteIds(null);
       return;
     }
-    // eslint-disable-next-line no-unused-vars
-    if (deleteInFlight) return;
-    setDeleteInFlight(true);
+    // Guard against concurrent/repeated execution. If a delete is already
+    // in flight, ignore this invocation entirely so we never issue duplicate
+    // destructive work or double-apply state transitions.
+    if (deleteInFlightRef.current) {
+      return;
+    }
+    deleteInFlightRef.current = true;
+    const runId = ++deleteRunIdRef.current;
+    // Snapshot the ids for this run so later mutations of `pendingDeleteIds`
+    // cannot change what this invocation deletes.
+    const idsSnapshot = new Set(idsToDelete);
     setBulkRunning((prev) => ({ ...prev, delete: true }));
     try {
-      await onBulkDelete(idsToDelete);
-      setItems((current) => current.filter((item) => !idsToDelete.has(item.id)));
-      const plural = idsToDelete.size === 1 ? "" : "s";
+      await onBulkDelete(idsSnapshot);
+      // Only the latest run may commit state. A superseded run is a no-op
+      // so retries and races cannot produce inconsistent results.
+      if (runId !== deleteRunIdRef.current) {
+        return;
+      }
+      setItems((current) => current.filter((item) => !idsSnapshot.has(item.id)));
+      const plural = idsSnapshot.size === 1 ? "" : "s";
       toastApi?.success?.(
         bulkLabels.deleteSuccessMsg
-          .replace("{count}", String(idsToDelete.size))
+          .replace("{count}", String(idsSnapshot.size))
           .replace("{plural}", plural),
         bulkLabels.deleteSuccessTitle
       );
       setPendingDeleteIds(null);
     } catch {
-      toastApi?.error?.(bulkLabels.deleteErrorMsg, bulkLabels.deleteErrorTitle);
+      if (runId === deleteRunIdRef.current) {
+        toastApi?.error?.(bulkLabels.deleteErrorMsg, bulkLabels.deleteErrorTitle);
+      }
     } finally {
-      setBulkRunning((prev) => ({ ...prev, delete: false }));
-      setDeleteInFlight(false);
+      if (runId === deleteRunIdRef.current) {
+        setBulkRunning((prev) => ({ ...prev, delete: false }));
+      }
+      deleteInFlightRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingDeleteIds, onBulkDelete, toastApi, deleteInFlight]);
