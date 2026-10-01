@@ -218,6 +218,38 @@ export const MOCK_SETTINGS = [
 
 // DEV-only delay (ms) to keep the load-more cycle perceptible in dev.
 const DEV_DELAY = process.env.NODE_ENV === "development" ? 80 : 0;
+const SETTING_FIELDS = ["id", "category", "label", "type", "value", "description"];
+
+// This shared fixture is read-only; callers that edit settings must own their state copy.
+for (const setting of MOCK_SETTINGS) Object.freeze(setting);
+Object.freeze(MOCK_SETTINGS);
+
+function validateSettingsOverride(settings) {
+  if (!Array.isArray(settings)) {
+    throw new TypeError("Settings test override must be an array.");
+  }
+
+  const ids = new Set();
+  for (const [index, setting] of settings.entries()) {
+    if (!setting || typeof setting !== "object" || Array.isArray(setting)) {
+      throw new TypeError(`Settings test override row ${index} must be an object.`);
+    }
+
+    for (const field of SETTING_FIELDS) {
+      if (typeof setting[field] !== "string") {
+        throw new TypeError(`Settings test override row ${index} has an invalid ${field} field.`);
+      }
+    }
+
+    if (["id", "category", "label", "type"].some((field) => !setting[field].trim())) {
+      throw new TypeError(`Settings test override row ${index} has an empty required field.`);
+    }
+    if (ids.has(setting.id)) {
+      throw new TypeError(`Settings test override contains a duplicate id at row ${index}.`);
+    }
+    ids.add(setting.id);
+  }
+}
 
 /**
  * Resolve the list of settings to display.
@@ -232,24 +264,44 @@ const DEV_DELAY = process.env.NODE_ENV === "development" ? 80 : 0;
  *   the caller sees a clean cancel.
  * @returns {Promise<Array>}
  */
-export function loadMockSettings({ signal } = {}) {
-  if (typeof window !== "undefined" && window.__TEST_MOCK_SETTINGS__) {
-    return Promise.resolve(window.__TEST_MOCK_SETTINGS__);
+export function loadMockSettings(options = {}) {
+  const signal = options?.signal;
+  if (
+    process.env.NODE_ENV !== "production" &&
+    typeof window !== "undefined" &&
+    Object.prototype.hasOwnProperty.call(window, "__TEST_MOCK_SETTINGS__")
+  ) {
+    const override = window.__TEST_MOCK_SETTINGS__;
+    try {
+      validateSettingsOverride(override);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return Promise.resolve(override);
   }
+
+  if (signal?.aborted) return Promise.resolve([]);
+
   return new Promise((resolve) => {
-    if (signal?.aborted) return resolve([]);
-    const timer = setTimeout(() => {
-      if (signal?.aborted) return resolve([]);
-      resolve(MOCK_SETTINGS);
-    }, DEV_DELAY);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve([]);
-      },
-      { once: true }
-    );
+    let timer;
+    let settled = false;
+    const settle = (settings) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener?.("abort", handleAbort);
+      resolve(settings);
+    };
+    const handleAbort = () => settle([]);
+
+    signal?.addEventListener?.("abort", handleAbort, { once: true });
+    if (signal?.aborted) {
+      handleAbort();
+      return;
+    }
+    if (settled) return;
+
+    timer = setTimeout(() => settle(MOCK_SETTINGS), DEV_DELAY);
   });
 }
 
@@ -262,7 +314,11 @@ export function loadMockSettings({ signal } = {}) {
  */
 export function getCategoryList(list) {
   if (!Array.isArray(list)) return ["all"];
-  const set = new Set((list ?? []).map((s) => s?.category).filter(Boolean));
+  const set = new Set(
+    list
+      .map((setting) => setting?.category)
+      .filter((category) => typeof category === "string" && category.trim().length > 0)
+  );
   return ["all", ...[...set].sort()];
 }
 

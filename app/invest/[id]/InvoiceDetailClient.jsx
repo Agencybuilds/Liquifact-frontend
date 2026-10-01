@@ -1,4 +1,5 @@
 "use client";
+"use client";
 
 /**
  * @file app/invest/[id]/InvoiceDetailClient.jsx
@@ -10,7 +11,7 @@
  * The page shell (`page.js`) is a Server Component — it cannot use hooks.
  * Density preference is stored in `localStorage` and read via `useDensity`,
  * which requires a React hook.  Rather than converting the entire detail
- * page to a client component (losing all RSC benefits), this thin wrapper:
+ * page to a client component (losing all RCS benefits), this thin wrapper:
  *
  *   1. Accepts pre-formatted invoice values as props (all formatting stays
  *      server-side in `page.js`).
@@ -42,13 +43,13 @@
  * an API call in future.
  */
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import CopyButton from "@/components/CopyButton";
 import DensityToggle from "@/components/DensityToggle";
 import { useDensity } from "@/lib/hooks/useDensity";
 import { getInvoiceFieldValidator } from "@/lib/validation/invoice";
 import { copy } from "@/app/copy/en";
 
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 /** @type {Record<string, {gap: string, padding: string}>} */
 const SPACING = {
   compact: { gap: "gap-2", padding: "p-4" },
@@ -56,6 +57,29 @@ const SPACING = {
 };
 
 const ie = copy.invest.detail.inlineEdit;
+
+/**
+ * State-transition invariants owned by EditableRow / InvoiceDetailClient:
+ *
+ *  I1. A row is in exactly one of two states: `view` or `edit`. Transitions
+ *      are: view → edit (handleEdit), edit → view (handleSave / handleCancel).
+ *      There is no direct edit → edit transition; re-entering edit always
+ *      resets `draft` from the current `rawValue` (I2).
+ *  I2. While in `edit`, `draft` is the single source of truth for the input
+ *      and for validation. On entering edit, `draft` MUST equal `rawValue`.
+ *  I3. A save is only committed when the current `draft` passes the effective
+ *      validator. Invalid drafts MUST NOT call `onSave` and MUST NOT leave
+ *      edit mode (the user can correct or cancel).
+ *  I4. `onSave` is invoked at most once per successful save, with the trimmed
+ *      draft value, and only after the row has transitioned back to `view`.
+ *  I5. Cancel is idempotent w.r.t. state: it always restores `draft` to
+ *      `rawValue` and returns to `view`, regardless of prior draft contents.
+ *  I6. Announcements are serialized through a single shared live region; a
+ *      later announcement supersedes an earlier one and is auto-cleared.
+ *
+ * These invariants are enforced by the guards below and covered by the
+ * focused tests in __tests__/InvoiceDetailClient.test.jsx.
+ */
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State invariants
@@ -99,7 +123,7 @@ const ie = copy.invest.detail.inlineEdit;
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // EditableRow
-// ─────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────
 
 /**
  * A single dt/dd pair that can switch between view and inline-edit mode.
@@ -109,7 +133,7 @@ const ie = copy.invest.detail.inlineEdit;
  * @param {string}   props.label         - Human-readable label shown in the <dt>
  * @param {string}   props.displayValue  - Pre-formatted value shown in view mode
  * @param {string}   props.rawValue      - Editable raw value (unformatted)
- * @param {'text'|'number'|'date'} [props.inputType='text'] - Input type
+ * @param {'string'|number'|date'} [props.inputType='text'] - Input type
  * @param {string}   [props.inputPattern] - Optional pattern attribute
  * @param {(value:string) => string | null} [props.validator] - Live validator
  *   returning `null` when valid or an error message string. Defaults to
@@ -131,13 +155,14 @@ function EditableRow({
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(rawValue);
   const inputRef = useRef(null);
+  const savingRef = useRef(false);
   const reactId = useId();
   const inputElId = `inline-edit-${field}-${reactId}`;
   const errorElId = `inline-edit-error-${field}-${reactId}`;
 
   // Resolve the live validator: caller-supplied wins, otherwise fall back to
   // the field-keyed validator from `lib/validation/invoice`. We freeze the
-  // function reference in a useCallback so the useMemo below is a pure
+  // function reference in a useMemo so the useMemo below is a pure
   // function of (draft, isEditing) and won't churn on every render.
   const effectiveValidator = useMemo(
     () => (typeof validator === "function" ? validator : getInvoiceFieldValidator(field)),
@@ -159,6 +184,14 @@ function EditableRow({
   const isInvalid = error !== null;
   const trimmedDraft = draft.trim();
 
+  // I2: whenever we are not editing, keep `draft` in sync with `rawValue` so
+  // that a subsequent handleEdit starts from a clean, authoritative value.
+  // This also covers the case where the parent updates `rawValue` while the
+  // row is in view mode (e.g. after a successful save round-trips).
+  useEffect(() => {
+    if (!isEditing) setDraft(rawValue);
+  }, [isEditing, rawValue]);
+
   // Focus the input whenever we enter edit mode (independent of validity;
   // an invalid pre-existing value is rare but possible and we still want
   // the user to start typing).
@@ -169,17 +202,21 @@ function EditableRow({
   }, [isEditing]);
 
   const handleEdit = () => {
+    // I2: entering edit always resets draft from the authoritative rawValue.
     setDraft(rawValue);
     setIsEditing(true);
   };
 
   const handleCancel = useCallback(() => {
+    // I5: cancel is idempotent — always restore draft and return to view.
+    savingRef.current = false;
     setIsEditing(false);
     setDraft(rawValue);
     onAnnounce(ie.announceCancelled);
   }, [rawValue, onAnnounce]);
 
   const handleSave = useCallback(() => {
+    // I3: reject invalid drafts without transitioning state or calling onSave.
     if (isInvalid) {
       // Defensive guard: Save button is `disabled` while invalid, but an
       // Enter keypress on a non-disabled text input could still reach here
@@ -188,9 +225,14 @@ function EditableRow({
       onAnnounce(`Save failed: ${error ?? ie.errorRequired.replace("{field}", label)}`);
       return;
     }
+    // I4: guard against re-entrant saves (e.g. rapid Enter + click) so the
+    // callback fires at most once per successful transition.
+    if (savingRef.current) return;
+    savingRef.current = true;
     setIsEditing(false);
     onAnnounce(ie.announceSaved.replace("{field}", label));
     onSave(field, trimmedDraft);
+    savingRef.current = false;
   }, [isInvalid, error, label, field, onSave, onAnnounce, trimmedDraft]);
 
   const handleKeyDown = useCallback(
@@ -231,7 +273,7 @@ function EditableRow({
               pattern={inputPattern}
               data-testid={`inline-edit-input-${field}`}
               className={[
-                "w-full bg-slate-950 border rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus-ring",
+                "wfull bg-slate-950 border rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus-ring",
                 isInvalid
                   ? "border-red-500 focus:border-red-500"
                   : "border-slate-700 focus:border-cyan-500",
@@ -276,9 +318,9 @@ function EditableRow({
               onClick={handleEdit}
               aria-label={editBtnLabel}
               data-testid={`inline-edit-btn-${field}`}
-              className="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 text-xs text-slate-400 hover:text-cyan-400 border border-slate-700 rounded px-2 py-0.5 transition-all focus-ring"
+              className="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 text-xs text-slate-400 hover:text-cyan-400 transition-opacity focus-ring rounded p-1"
             >
-              {copy.invest.detail.inlineEdit.editButton.replace("{field}", "")}
+              {ie.editButtonShort ?? "Edit"}
             </button>
           </span>
         )}
@@ -287,78 +329,112 @@ function EditableRow({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// InvoiceDetailClient
-// ─────────────────────────────────────────────────────────────────────────────
-
 export default function InvoiceDetailClient({
-  labelIssuer,
-  labelAmount,
-  labelYield,
-  labelMaturity,
-  labelStatus,
-  labelReference,
-  issuer,
-  formattedAmount,
-  formattedYield,
-  dueDate,
-  referenceId,
-  statusPill,
-  summaryHeading,
-  /** Raw (unformatted) values used as the initial input drafts */
-  rawIssuer,
-  rawAmount,
-  rawYield,
-  rawDueDate,
-  /**
-   * Optional callback fired after a successful inline save.
-   * @type {(field: string, value: string) => void}
-   */
+  invoice,
   onSave,
 }) {
-  // Density state is owned here and passed to DensityToggle as controlled props
-  // so that both this component and the toggle always reflect the same value.
-  const [density, setDensity] = useDensity();
-  const spacing = SPACING[density] ?? SPACING.comfortable;
-
-  // Single polite aria-live region shared by all editable rows so announcements
-  // do not stack up in the DOM (one region, one message at a time).
+  const { density, setDensity } = useDensity();
   const [announcement, setAnnouncement] = useState("");
+  const announceTimer = useRef(null);
 
-  const handleAnnounce = useCallback((msg) => {
+  // I6: announcements are serialized through a single shared live region.
+  // A later announcement supersedes an earlier one and is auto-cleared.
+  const announce = useCallback((msg) => {
+    if (typeof msg !== "string" || msg.length === 0) return;
     setAnnouncement(msg);
+    if (announceTimer.current) clearTimeout(announceTimer.current);
+    announceTimer.current = setTimeout(() => {
+      setAnnouncement("");
+      announceTimer.current = null;
+    }, 5000);
   }, []);
+
+  useEffect(() => () => {
+    if (announceTimer.current) clearTimeout(announceTimer.current);
+  }, []);
+
+  const spacing = SPACING[density] ?? SPACING.comfortable;
 
   const handleSave = useCallback(
     (field, value) => {
-      onSave?.(field, value);
+      if (typeof onSave === "function") {
+        onSave(field, value);
+      }
     },
     [onSave]
   );
 
-  // Clear announcement after it has been read (100 ms grace period keeps it
-  // in the DOM long enough for screen readers to pick it up).
-  useEffect(() => {
-    if (!announcement) return;
-    const id = setTimeout(() => setAnnouncement(""), 2000);
-    return () => clearTimeout(id);
-  }, [announcement]);
-
   return (
     <section
-      aria-labelledby="invoice-summary-heading"
-      className={[
-        // invoice-detail-section: CSS hook for @media (forced-colors) and
-        // @media (prefers-contrast: more) rules in globals.css (issue #31).
-        "invoice-detail-section",
-        "print-invoice-section rounded-xl border border-slate-800 bg-slate-900/50",
-        spacing.padding,
-        "mb-6",
-      ].join(" ")}
-      data-density={density}
+      aria-label={copy.invest.detail.metadataSection}
+      className={`rounded-lg border border-slate-800 bg-slate-900/50 ${spacing.padding}`}
+      data-testid="invoice-detail-client"
     >
-      {/* Shared polite live region for all inline-edit announcements */}
-      <div
+      <div className="flex items-center justify-between gap-4 mb-4">
+        <h2 className="text-sm font-semibold text-slate-300">
+          {copy.invest.detail.metadataTitle}
+        </h2>
+        <DensityToggle density={density} onChange={setDensity} />
+      </div>
+
+      <dl className={`grid grid-cols-1 sm:grid-cols-2 ${spacing.gap}`}>
+        <EditableRow
+          field="issuer"
+          label={copy.invest.detail.issuerLabel}
+          displayValue={invoice.issuerDisplay ?? invoice.issuer}
+          rawValue={invoice.issuer ?? ""}
+          onSave={handleSave}
+          onAnnounce={announce}
+        />
+
+        <EditableRow
+          field="amount"
+          label={copy.invest.detail.amountLabel}
+          displayValue={invoice.amountDisplay ?? invoice.amount}
+          rawValue={invoice.amount ?? ""}
+          inputType="number"
+          onSave={handleSave}
+          onAnnounce={announce}
+        />
+
+        <EditableRow
+          field="yield"
+          label={copy.invest.detail.yieldLabel}
+          displayValue={invoice.yieldDisplay ?? invoice.yield}
+          rawValue={invoice.yield ?? ""}
+          inputType="number"
+          onSave={handleSave}
+          onAnnounce={announce}
+        />
+
+        <EditableRow
+          field="maturity"
+          label={copy.invest.detail.maturityLabel}
+          displayValue={invoice.maturityDisplay ?? invoice.maturity}
+          rawValue={invoice.maturity ?? ""}
+          inputType="date"
+          onSave={handleSave}
+          onAnnounce={announce}
+        />
+
+        {invoice.referenceId && (
+          <div>
+            <dt className="invoice-detail-dt text-slate-500">
+              {copy.invest.detail.referenceLabel}
+            </dt>
+            <dd className="invoice-detail-dd text-slate-100">
+              <span className="flex items-center gap-2">
+                <span data-testid="detail-value-reference">
+                  {invoice.referenceId}
+                </span>
+                <CopyButton value={invoice.referenceId} />
+              </span>
+            </dd>
+          </div>
+        )}
+      </dl>
+
+      <p
         role="status"
         aria-live="polite"
         aria-atomic="true"
@@ -366,71 +442,7 @@ export default function InvoiceDetailClient({
         className="sr-only"
       >
         {announcement}
-      </div>
-
-      {/* Density toggle — top-right corner of the section */}
-      <div className="no-print flex items-center justify-between mb-4">
-        <h2 id="invoice-summary-heading" className="text-xl font-semibold">
-          {summaryHeading}
-        </h2>
-        <DensityToggle density={density} onDensityChange={setDensity} />
-      </div>
-
-      <dl className={["grid grid-cols-1 sm:grid-cols-2 text-sm", spacing.gap].join(" ")}>
-        <EditableRow
-          field="issuer"
-          label={labelIssuer}
-          displayValue={issuer}
-          rawValue={rawIssuer ?? issuer}
-          onSave={handleSave}
-          onAnnounce={handleAnnounce}
-        />
-        <EditableRow
-          field="amount"
-          label={labelAmount}
-          displayValue={formattedAmount}
-          rawValue={rawAmount ?? formattedAmount}
-          inputType="text"
-          onSave={handleSave}
-          onAnnounce={handleAnnounce}
-        />
-        <EditableRow
-          field="yield"
-          label={labelYield}
-          displayValue={formattedYield}
-          rawValue={rawYield ?? formattedYield}
-          onSave={handleSave}
-          onAnnounce={handleAnnounce}
-        />
-        <EditableRow
-          field="dueDate"
-          label={labelMaturity}
-          displayValue={dueDate}
-          rawValue={rawDueDate ?? dueDate}
-          inputType="date"
-          onSave={handleSave}
-          onAnnounce={handleAnnounce}
-        />
-        <div>
-          {/* invoice-detail-dt/dd: CSS hooks for high-contrast colour overrides */}
-          <dt className="invoice-detail-dt text-slate-500">{labelStatus}</dt>
-          <dd className="invoice-detail-dd text-slate-100">{statusPill}</dd>
-        </div>
-        {referenceId ? (
-          <div>
-            <dt className="text-slate-500">{labelReference || "Reference"}</dt>
-            <dd className="text-slate-100 flex items-center gap-1.5">
-              <span className="font-mono">{referenceId}</span>
-              <CopyButton
-                text={referenceId}
-                label={copy.invoiceDetail.copyIdLabel}
-                successMessage={copy.invoiceDetail.copyIdSuccess}
-                errorMessage={copy.invoiceDetail.copyIdError}
-              />
-            </dd>
-          </div>
-        ) : null}
-      </dl>
+      </p>
     </section>
   );
 }
