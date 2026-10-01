@@ -184,6 +184,8 @@ export const metadata = {
   twitter: {},
 };
 
+const CSP_NONCE_PATTERN = /^[A-Za-z0-9+/]{22}==$/;
+
 export default async function RootLayout({ children }) {
   const nonceResult = resolveLayoutInputs({
     nonce: (await headers()).get("x-nonce"),
