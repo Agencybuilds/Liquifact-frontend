@@ -8,6 +8,11 @@ export const size = {
 };
 export const contentType = "image/png";
 
+/**
+ * Protects state invariants for the Apple icon generation.
+ * Ensures the icon is generated deterministically and handles potential
+ * rendering failures gracefully to avoid unrecoverable user experiences.
+ */
 export default function AppleIcon() {
   try {
     return new ImageResponse(
