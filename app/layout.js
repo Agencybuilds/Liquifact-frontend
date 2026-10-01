@@ -21,8 +21,29 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const DEFAULT_SITE_URL = "http://localhost:3000";
+const ALLOWED_METADATA_PROTOCOLS = new Set(["http:", "https:"]);
+
+export function resolveMetadataBase(siteUrl = process.env.NEXT_PUBLIC_SITE_URL) {
+  const candidate = typeof siteUrl === "string" ? siteUrl.trim() : "";
+
+  if (!candidate) {
+    return new URL(DEFAULT_SITE_URL);
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    if (!ALLOWED_METADATA_PROTOCOLS.has(parsed.protocol)) {
+      return new URL(DEFAULT_SITE_URL);
+    }
+    return parsed;
+  } catch {
+    return new URL(DEFAULT_SITE_URL);
+  }
+}
+
 export const metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"),
+  metadataBase: resolveMetadataBase(),
   title: `LiquiFact — ${copy.home.heroTitle}`,
   description: copy.home.heroSub,
   openGraph: {
