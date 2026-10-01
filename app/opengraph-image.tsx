@@ -5,7 +5,7 @@ import { reportError } from "../lib/observability/reportError";
 export const runtime = "edge";
 
 export const alt = "LiquiFact Social Preview";
-export const size = { width: 1200, height: 630 };
+export const size = { width: 1200, height: 630 } as const;
 export const contentType = "image/png";
 
 /**
@@ -38,7 +38,7 @@ function renderPrimary(): Response {
         alignItems: "flex-start",
         justifyContent: "center",
         padding: "80px",
-      }}
+      },
     >
       <div style={{ display: "flex", alignItems: "center", marginBottom: "40px" }}>
         <div
@@ -71,15 +71,12 @@ function renderPrimary(): Response {
           color: "#22d3ee",
         }}
       >
-        {copy.home.heroTitle}
+        {title}
       </h2>
       <p style={{ fontSize: "32px", color: "#94a3b8", maxWidth: "900px", lineHeight: 1.4 }}>
-        {copy.home.heroSub}
+        {subtitle}
       </p>
-    </div>,
-    {
-      ...size,
-    }
+    </div>
   );
 }
 
