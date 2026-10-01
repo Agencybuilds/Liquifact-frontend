@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useContext } from "react";
 import Button from "./Button";
 import { copy } from "../app/copy/en";
+import { TRUSTED_WALLET_INSTALL_URL } from "../app/copy/constants";
 import { WalletContext, WALLET_STATES, truncateAddress } from "./WalletProvider";
 import { useToast } from "./ToastProvider";
 import { copyToClipboard } from "../lib/clipboard";
@@ -18,39 +19,56 @@ const WALLET_SPACING = {
 };
 
 /**
- * Compatibility contract for wallet copy keys.
+ * Validate the wallet-install URL without exposing path/query values in
+ * diagnostics. The trusted default is a build-time constant, not mutable UI
+ * copy, so repeated renders cannot be influenced by shared dictionary writes.
  *
- * `app/copy/constants.js` (and the `copy` object imported from
- * `app/copy/en`) is a public compatibility surface: downstream consumers
- * (tests, analytics, i18n tooling, and other components) read these keys
- * directly. To preserve that contract through upgrades, errors, and empty
- * data we resolve every key through a single, deterministic accessor that:
- *
- *   1. Never throws when a key is missing (returns the provided fallback).
- *   2. Never returns `undefined` for a string-typed contract (falls back).
- *   3. Coerces non-string values to a safe string so downstream rendering
- *      and `aria-label`/`aria-describedby` remain well-formed.
- *   4. Is pure and side-effect free, so it is safe under concurrent render,
- *      retries, and StrictMode double-invocation.
- *
- * Invariant: for any `key`, `resolveCopy(key, fallback)` returns a string.
- * @param {string} key - Dotted path into the `copy` object, e.g. "wallet.connectButton".
- * @param {string} fallback - Non-empty fallback used when the key is absent or invalid.
- * @returns {string}
+ * @param {unknown} url
+ * @returns {{ ok: true, href: string } | { ok: false, reason: string, protocol?: string }}
  */
-function resolveCopy(key, fallback) {
-  const safeFallback = typeof fallback === "string" && fallback.length > 0 ? fallback : "";
-  if (typeof key !== "string" || key.length === 0) return safeFallback;
-  const segments = key.split(".");
-  let current = copy;
-  for (const segment of segments) {
-    if (current == null || typeof current !== "object") return safeFallback;
-    if (!Object.prototype.hasOwnProperty.call(current, segment)) return safeFallback;
-    current = current[segment];
+export function validateWalletInstallUrl(url) {
+  if (typeof url !== "string" || url.length === 0) {
+    return { ok: false, reason: "missing-url" };
   }
-  if (typeof current === "string") return current;
-  if (current == null) return safeFallback;
-  return String(current);
+
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, reason: "invalid-url" };
+  }
+
+  if (parsed.protocol !== "https:") {
+    return {
+      ok: false,
+      reason: "non-https-url",
+      protocol: parsed.protocol || "unknown",
+    };
+  }
+
+  return { ok: true, href: parsed.href };
+}
+
+/**
+ * Open the trusted wallet-install page in a separate browsing context.
+ * Invalid URLs are rejected with non-sensitive diagnostics.
+ *
+ * @param {unknown} [url]
+ * @returns {boolean} True when navigation was attempted.
+ */
+export function openTrustedWalletInstallUrl(url = TRUSTED_WALLET_INSTALL_URL) {
+  const validation = validateWalletInstallUrl(url);
+
+  if (validation.ok) {
+    window.open(validation.href, "_blank", "noopener,noreferrer");
+    return true;
+  }
+
+  const diagnostic = validation.protocol
+    ? { reason: validation.reason, protocol: validation.protocol }
+    : { reason: validation.reason };
+  console.error("Blocked unsafe wallet install URL.", diagnostic);
+  return false;
 }
 
 /**
@@ -266,18 +284,7 @@ export default function WalletStatus() {
         break;
 
       case WALLET_STATES.NO_WALLET:
-        {
-          const url = resolveCopy("wallet.installWalletUrl", "");
-          // Only allow https URLs for security
-          if (typeof url === "string" && url.startsWith("https://")) {
-            window.open(url, "_blank", "noopener,noreferrer");
-          } else {
-            console.error(
-              "Blocked attempt to open a non-HTTPS wallet URL for security reasons:",
-              url
-            );
-          }
-        }
+        openTrustedWalletInstallUrl();
         break;
 
       default:

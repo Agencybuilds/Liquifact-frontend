@@ -1,3 +1,5 @@
+import { TRUSTED_WALLET_INSTALL_URL } from "./constants";
+
 /**
  * @typedef {Object} CopyDictionary
  * @property {Object} home - Home page copy
@@ -247,7 +249,35 @@
  * @property {Object} setting
 */
 
-const copy = {
+/**
+ * Recursively freeze application copy so all module consumers observe the same
+ * read-only dictionary across SSR requests, retries, and concurrent tests.
+ *
+ * @template T
+ * @param {T} value
+ * @param {WeakSet<object>} [seen]
+ * @returns {T}
+ */
+function deepFreeze(value, seen = new WeakSet()) {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  if (seen.has(value)) {
+    return value;
+  }
+
+  seen.add(value);
+
+  Object.values(value).forEach((nestedValue) => {
+    deepFreeze(nestedValue, seen);
+  });
+
+  return Object.freeze(value);
+}
+
+/** @type {CopyDictionary} */
+export const copy = deepFreeze({
   home: {
     heroTitle: 'Liquifact',
     heroSub: 'Invoice financing for modern businesses',
@@ -618,7 +648,7 @@ const copy = {
     helperInvalidProvider:
       "The detected wallet provider could not be verified. Reinstall the Freighter extension and reload.",
     helperNoWallet: "No Stellar wallet detected. Install one to continue",
-    installWalletUrl: "https://www.stellar.org/wallets",
+    installWalletUrl: TRUSTED_WALLET_INSTALL_URL,
     toastConnectedTitle: "Wallet connected",
     toastConnectedMsg: "Wallet connected successfully.",
     toastErrorTitle: "Connection failed",
@@ -708,7 +738,4 @@ const copy = {
     retryLabel: "Retry",
     byActor: "By {actor}",
   },
-};
-
-export default copy;
-export { copy };
+});
