@@ -365,6 +365,19 @@ export function InvestMarketplace({
   const loadMoreRef = useRef(null);
   const pageLoadInFlightRef = useRef(false);
 
+  /**
+   * Tracks the filter/search signature at the time handleLoadMore was invoked.
+   * If filters change while load-more is in-flight, this will differ from the
+   * current filterSignature and the response will be discarded (idempotent).
+   */
+  const loadMoreFilterSignatureRef = useRef(null);
+
+  /**
+   * AbortController for the in-flight load-more request. Cancelled if filters
+   * change, preventing stale pagination results from being applied.
+   */
+  const loadMoreAbortRef = useRef(null);
+
   const refreshPage = useCallback(() => {
     setNextCursor(null);
     setHasMore(false);
@@ -450,13 +463,24 @@ export function InvestMarketplace({
   // survives reloads. router.replace keeps the back button friendly (no new
   // history entries for every filter keystroke) and a debounce prevents rapid
   // successive updates.
+  //
+  // Invariant: before updating the URL, verify that filters/search state hasn't
+  // changed since the timer was set. This prevents interleaved URL updates from
+  // causing stale state to be committed to the browser history.
   useEffect(() => {
     const next = buildSearchParams(filters, debouncedSearch).toString();
     if (next === committedSearchRef.current) return;
     clearTimeout(urlUpdateTimerRef.current);
+    // Capture current state at timer creation time for consistency check.
+    const capturedFilters = filters;
+    const capturedSearch = debouncedSearch;
     urlUpdateTimerRef.current = setTimeout(() => {
-      committedSearchRef.current = next;
-      router.replace(`?${next}`, { scroll: false });
+      // Verify state hasn't changed between timer creation and execution.
+      if (capturedFilters !== filters || capturedSearch !== debouncedSearch) return;
+      const currentNext = buildSearchParams(filters, debouncedSearch).toString();
+      if (currentNext === committedSearchRef.current) return;
+      committedSearchRef.current = currentNext;
+      router.replace(`?${currentNext}`, { scroll: false });
     }, URL_SYNC_DEBOUNCE_MS);
     return () => clearTimeout(urlUpdateTimerRef.current);
   }, [filters, debouncedSearch, router]);
@@ -524,6 +548,16 @@ export function InvestMarketplace({
   } = useBulkSelection(filteredInvoices);
 
   const filterActive = hasAnyActiveFilters(filters, debouncedSearch);
+
+  /**
+   * Effect: abort any in-flight load-more pagination when filters/search change.
+   * This prevents stale pagination results from being applied after a filter change.
+   */
+  useEffect(() => {
+    loadMoreAbortRef.current?.abort();
+    loadMoreAbortRef.current = null;
+    loadMoreFilterSignatureRef.current = null;
+  }, [debouncedSearch, filters]);
 
   /**
    * Effect: fetch invoices on mount and on every retry.
@@ -633,24 +667,43 @@ export function InvestMarketplace({
    * Appends the next PAGE_SIZE items and updates the live-region status.
    * Focus is moved back to the "Load more" button (if it still exists) so
    * keyboard users do not lose their place in the page.
+   *
+   * Invariants:
+   * - A second load-more call while one is in-flight is ignored.
+   * - If filters/search change while load-more is pending, the response is
+   *   discarded and the AbortController is cleaned up.
+   * - Load-more requests include the filter/search state at invocation time;
+   *   if that state differs from the current state when the response arrives,
+   *   the response is discarded (stale result protection).
    */
   const handleLoadMore = useCallback(async () => {
     if (pageLoadInFlightRef.current || pageLoading || !hasMore || !nextCursor || cursorError) return;
 
     pageLoadInFlightRef.current = true;
     const currentInvoices = Array.isArray(invoices) ? invoices : [];
+    const currentFilterSignature = filterSignature;
     setPageLoading(true);
     setCursorError("");
 
+    // Create new AbortController and store for cleanup on filter change.
+    const controller = new AbortController();
+    loadMoreAbortRef.current = controller;
+    loadMoreFilterSignatureRef.current = currentFilterSignature;
+
     try {
       const pageResponse = await loadInvoices({
-        signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined,
+        signal: controller.signal,
         cursor: nextCursor,
         filters,
         search: debouncedSearch,
         sort: filters.sort || null,
         sortDir: filters.sortDir || "desc",
       });
+
+      // Discard response if filters changed while request was in-flight.
+      if (currentFilterSignature !== filterSignature) {
+        return;
+      }
 
       const normalized = normalizeInvoicePageResult(pageResponse);
       if (normalized.invalidCursor) {
@@ -666,17 +719,26 @@ export function InvestMarketplace({
       setNextCursor(normalized.nextCursor ?? null);
       setHasMore(Boolean(normalized.hasMore) || normalized.nextCursor !== null);
       setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, merged.length));
-    } catch {
+    } catch (err) {
+      // Ignore AbortError if filters changed (cleanup in progress).
+      if (err?.name === "AbortError") return;
       setLoadError(copy.invest.errorDescription);
       setCursorError("");
     } finally {
       pageLoadInFlightRef.current = false;
       setPageLoading(false);
+      // Clean up ref if still points to this request.
+      if (loadMoreAbortRef.current === controller) {
+        loadMoreAbortRef.current = null;
+      }
+      if (loadMoreFilterSignatureRef.current === currentFilterSignature) {
+        loadMoreFilterSignatureRef.current = null;
+      }
       setTimeout(() => {
         loadMoreRef.current?.focus();
       }, 0);
     }
-  }, [pageLoading, hasMore, nextCursor, cursorError, invoices, loadInvoices, filters, debouncedSearch]);
+  }, [pageLoading, hasMore, nextCursor, cursorError, invoices, loadInvoices, filters, debouncedSearch, filterSignature]);
 
   // ── Bulk actions ──────────────────────────────────────────────────────────
   const handleToggleSelectAll = useCallback(() => {
