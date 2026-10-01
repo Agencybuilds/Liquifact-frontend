@@ -1,3 +1,13 @@
+/**
+ * @file app/invest/loading.js
+ * Next.js route-level loading UI for the /invest page.
+ *
+ * Rendered automatically by the Next.js App Router while the page segment
+ * is streaming. Delegates the content area to the reusable InvoiceListSkeleton
+ * component so both stay in sync with the real layout.
+ *
+ * @see components/InvoiceListSkeleton.jsx — reusable invoice list skeleton
+ */
 import InvoiceListSkeleton from "../../components/InvoiceListSkeleton";
 import NavMenuSkeleton from "../../components/NavMenuSkeleton";
 
@@ -19,6 +29,7 @@ export default function InvestLoading() {
           </div>
         </div>
 
+        {/* ---- Reusable invoice list skeleton ---- */}
         <InvoiceListSkeleton rows={3} />
       </main>
     </div>
