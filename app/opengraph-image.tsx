@@ -1,10 +1,11 @@
 import { ImageResponse } from "next/og";
 import { copy } from "./copy/en";
+import { reportError } from "../lib/observability/reportError";
 
 export const runtime = "edge";
 
 export const alt = "LiquiFact Social Preview";
-export const size = { width: 1200, height: 630 };
+export const size = { width: 1200, height: 630 } as const;
 export const contentType = "image/png";
 
 /**
@@ -105,7 +106,7 @@ export default function Image() {
         alignItems: "flex-start",
         justifyContent: "center",
         padding: "80px",
-      }}
+      },
     >
       <div style={{ display: "flex", alignItems: "center", marginBottom: "40px" }}>
         <div
@@ -143,9 +144,54 @@ export default function Image() {
       <p style={{ fontSize: "32px", color: "#94a3b8", maxWidth: "900px", lineHeight: 1.4 }}>
         {sub}
       </p>
+    </div>
+  );
+}
+
+function renderFallback(): Response {
+  return new ImageResponse(
+    <div
+      style={{
+        background: "#020617",
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "#f8fafc",
+        fontSize: "72px",
+        fontWeight: 800,
+      }}
+    >
+      LiquiFact
     </div>,
     {
       ...size,
     }
   );
+}
+
+/**
+ * Runs a renderer with a deterministic fallback. The first failure is
+ * reported with scrubbed context, then the fallback is attempted. If the
+ * fallback also fails, the error is reported and re-thrown so the route
+ * fails visibly instead of serving a corrupt or empty image.
+ */
+function renderWithRecovery(primary: Renderer, fallback: Renderer): Response {
+  try {
+    return primary();
+  } catch (error) {
+    reportError(error, { ...FALLBACK_CONTEXT, phase: "primary" });
+  }
+
+  try {
+    return fallback();
+  } catch (fallbackError) {
+    reportError(fallbackError, { ...FALLBACK_CONTEXT, phase: "fallback" });
+    throw fallbackError;
+  }
+}
+
+export default function Image() {
+  return renderWithRecovery(renderPrimary, renderFallback);
 }
