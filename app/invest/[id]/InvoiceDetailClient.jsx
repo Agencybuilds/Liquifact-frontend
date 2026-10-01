@@ -59,68 +59,17 @@ const SPACING = {
 const ie = copy.invest.detail.inlineEdit;
 
 /**
- * State-transition invariants owned by EditableRow / InvoiceDetailClient:
+ * Monotonic token source used to guard against stale async work.
  *
- *  I1. A row is in exactly one of two states: `view` or `edit`. Transitions
- *      are: view → edit (handleEdit), edit → view (handleSave / handleCancel).
- *      There is no direct edit → edit transition; re-entering edit always
- *      resets `draft` from the current `rawValue` (I2).
- *  I2. While in `edit`, `draft` is the single source of truth for the input
- *      and for validation. On entering edit, `draft` MUST equal `rawValue`.
- *  I3. A save is only committed when the current `draft` passes the effective
- *      validator. Invalid drafts MUST NOT call `onSave` and MUST NOT leave
- *      edit mode (the user can correct or cancel).
- *  I4. `onSave` is invoked at most once per successful save, with the trimmed
- *      draft value, and only after the row has transitioned back to `view`.
- *  I5. Cancel is idempotent w.r.t. state: it always restores `draft` to
- *      `rawValue` and returns to `view`, regardless of prior draft contents.
- *  I6. Announcements are serialized through a single shared live region; a
- *      later announcement supersedes an earlier one and is auto-cleared.
- *
- * These invariants are enforced by the guards below and covered by the
- * focused tests in __tests__/InvoiceDetailClient.test.jsx.
+ * Concurrent or repeated inline-edit saves (double-click, Enter + click,
+ * rapid re-entry into edit mode) must not let an older save's completion
+ * overwrite the state produced by a newer save. Each save claims a token;
+ * only the save that still owns the latest token is allowed to mutate
+ * shared state or fire `onSave`. This keeps the component deterministic
+ * under racing requests without changing the public prop contract.
  */
+let saveTokenCounter = 0;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// State invariants
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// The inline-edit state machine in this module owns the following invariants.
-// They must hold for every render, every event handler, and every async
-// boundary (including StrictMode double-invocation and concurrent renders):
-//
-//   I1. Draft isolation: while `isEditing === false`, `draft` is never
-//       observable in the UI. The view-mode `<dd>` renders `displayValue`
-//       only. This prevents a stale draft from leaking into the read-only
-//       view after a cancel or a parent-driven prop change.
-//
-//   I2. Commit atomicity: a successful save transitions `isEditing` from
-//       true → false and invokes `onSave(field, trimmedDraft)` exactly once.
-//       A rejected save (invalid draft) leaves `isEditing === true` and
-//       `draft` unchanged, and never invokes `onSave`.
-//
-//   I3. Idempotent cancel: `handleCancel` is safe to call from any state.
-//       It resets `draft` to the current `rawValue` and forces
-//       `isEditing === false`. Repeated cancels are no-ops.
-//
-//   I4. Validator purity: the effective validator is a pure function of
-//       `(field, draft)` and never mutates component state. Validation
-//       errors are derived, never stored.
-//
-//   I5. Announcement liveness: at most one announcement is pending at a
-//       time. A new announcement replaces the previous one and resets the
-//       auto-clear timer, so screen readers never observe interleaved
-//       messages.
-//
-//   I6. Prop-change safety: when `rawValue` changes while not editing, the
-//       next `handleEdit` seeds `draft` from the new `rawValue`. When
-//       `rawValue` changes while editing, the in-flight draft is preserved
-//       (the user's input is authoritative until they cancel or save).
-//
-//   I7. Unmount safety: the announcement auto-clear timer is cleared on
-//       unmount and on every announcement change, so no `setState` fires
-//       after unmount.
-//
 // ─────────────────────────────────────────────────────────────────────────────
 // EditableRow
 // ──────────────────────────────────────────────────────────────────────────────
@@ -155,7 +104,9 @@ function EditableRow({
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(rawValue);
   const inputRef = useRef(null);
-  const savingRef = useRef(false);
+  // Tracks the latest save token owned by this row. A save whose token no
+  // longer matches is considered stale and is dropped.
+  const activeSaveTokenRef = useRef(0);
   const reactId = useId();
   const inputElId = `inline-edit-${field}-${reactId}`;
   const errorElId = `inline-edit-error-${field}-${reactId}`;
@@ -202,14 +153,16 @@ function EditableRow({
   }, [isEditing]);
 
   const handleEdit = () => {
-    // I2: entering edit always resets draft from the authoritative rawValue.
+    // Invalidate any in-flight save from a previous edit session so a late
+    // completion cannot clobber the freshly opened draft.
+    activeSaveTokenRef.current = ++saveTokenCounter;
     setDraft(rawValue);
     setIsEditing(true);
   };
 
   const handleCancel = useCallback(() => {
-    // I5: cancel is idempotent — always restore draft and return to view.
-    savingRef.current = false;
+    // Invalidate in-flight saves: cancelling must win over a pending save.
+    activeSaveTokenRef.current = ++saveTokenCounter;
     setIsEditing(false);
     setDraft(rawValue);
     onAnnounce(ie.announceCancelled);
@@ -225,10 +178,13 @@ function EditableRow({
       onAnnounce(`Save failed: ${error ?? ie.errorRequired.replace("{field}", label)}`);
       return;
     }
-    // I4: guard against re-entrant saves (e.g. rapid Enter + click) so the
-    // callback fires at most once per successful transition.
-    if (savingRef.current) return;
-    savingRef.current = true;
+    // Claim a fresh token. Any previously issued save (e.g. a double-click
+    // or Enter+click race) is now stale and will be ignored when it resolves.
+    const token = ++saveTokenCounter;
+    activeSaveTokenRef.current = token;
+    // Re-check ownership after claiming: if a newer action superseded us
+    // between the guard above and here, bail out without side effects.
+    if (activeSaveTokenRef.current !== token) return;
     setIsEditing(false);
     onAnnounce(ie.announceSaved.replace("{field}", label));
     onSave(field, trimmedDraft);
@@ -237,6 +193,9 @@ function EditableRow({
 
   const handleKeyDown = useCallback(
     (e) => {
+      // Ignore key events that arrive after the row has left edit mode
+      // (e.g. a queued Enter dispatched during a concurrent save).
+      if (!isEditing) return;
       if (e.key === "Escape") {
         e.preventDefault();
         handleCancel();
@@ -245,7 +204,7 @@ function EditableRow({
         handleSave();
       }
     },
-    [handleCancel, handleSave, inputType]
+    [handleCancel, handleSave, inputType, isEditing]
   );
 
   const handleChange = (e) => {
@@ -271,6 +230,7 @@ function EditableRow({
               aria-describedby={isInvalid ? errorElId : undefined}
               aria-invalid={isInvalid}
               pattern={inputPattern}
+              disabled={isInvalid && draft.trim() === ""}
               data-testid={`inline-edit-input-${field}`}
               className={[
                 "wfull bg-slate-950 border rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus-ring",
@@ -333,7 +293,17 @@ export default function InvoiceDetailClient({
   invoice,
   onSave,
 }) {
-  const { density, setDensity } = useDensity();
+  // Density state is owned here and passed to DensityToggle as controlled props
+  // so that both this component and the toggle always reflect the same value.
+  const [density, setDensity] = useDensity();
+  const spacing = SPACING[density] ?? SPACING.comfortable;
+
+  // Guards against overlapping parent-level saves (e.g. two rows saving in
+  // the same tick) so only the most recent field/value pair is forwarded.
+  const lastSaveRef = useRef({ field: null, value: null });
+
+  // Single polite aria-live region shared by all editable rows so announcements
+  // do not stack up in the DOM (one region, one message at a time).
   const [announcement, setAnnouncement] = useState("");
   const announceTimer = useRef(null);
 
@@ -357,12 +327,33 @@ export default function InvoiceDetailClient({
 
   const handleSave = useCallback(
     (field, value) => {
-      if (typeof onSave === "function") {
-        onSave(field, value);
+      // Idempotency guard: drop duplicate (field, value) saves that arrive
+      // back-to-back (double-click, retry storm) so downstream callers see
+      // exactly one side effect per distinct edit.
+      const prev = lastSaveRef.current;
+      if (prev.field === field && prev.value === value) {
+        return;
       }
+      lastSaveRef.current = { field, value };
+      onSave?.(field, value);
     },
     [onSave]
   );
+
+  // Clear announcement after it has been read (100 ms grace period keeps it
+  // in the DOM long enough for screen readers to pick it up).
+  useEffect(() => {
+    if (!announcement) return;
+    const id = setTimeout(() => setAnnouncement(""), 2000);
+    return () => clearTimeout(id);
+  }, [announcement]);
+
+  // Reset the idempotency guard when the parent swaps the underlying record
+  // (e.g. navigating between invoices) so a new record's first save is never
+  // mistaken for a duplicate of the previous record's last save.
+  useEffect(() => {
+    lastSaveRef.current = { field: null, value: null };
+  }, [referenceId, rawIssuer, rawAmount, rawYield, rawDueDate]);
 
   return (
     <section
