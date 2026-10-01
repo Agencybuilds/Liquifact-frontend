@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import ErrorBanner from "../components/ErrorBanner";
 import { reportError } from "../lib/observability/reportError";
 import { copy } from "./copy/en";
@@ -45,100 +45,190 @@ export const ERROR_RECOVERY_FAILED =
  *   the subtree, effectively retrying the failed render without a full page
  *   reload. Use it to give users a non-destructive recovery path.
  *
- * Compatibility contracts (preserved across upgrades):
- * - **Next.js App Router error boundary signature**: the default export is a
- *   component that accepts `{ error, reset }` and returns a React element.
- *   Next.js relies on this shape; changing it would break the boundary.
- * - **Dom and accessibility contract**: the root element keeps
- *   `data-testid="error-boundary-page"`, the main landmark keeps
- *   `id="main-content"`, and the heading keeps `id="error-boundary-heading"`.
- *   These are used by tests and assistive technology.
- * - **Copy contract**: all user-visible strings come from `copy.error`.
- * - **Observability contract**: every error is forwarded to `reportError`
- *   exactly once per error identity, with `{ digest }` context. The
- *   reporter is fail-safe and must never throw back into the boundary.
+ * ## Validation boundaries
+ *
+ * This boundary is the last line of defense between an arbitrary thrown
+ * value and the observability sink. The invariants enforced here are:
+ *
+ * 1. **Normalization** — `error` is always coerced to a real `Error`
+ *    instance. React can throw anything (strings, `null`, plain objects,
+ *    or even `undefined`), and `reportError` must never receive a non-
+ *    `Error` value or it would lose the stack/digest and crash the sink.
+ * 2. **Digest sanitization** — only a non-empty string digest is forwarded.
+ *    Next.js sometimes leaves it `undefined` or `null`; forwarding those
+ *    would produce noise in correlation queries.
+ * 3. **Deduplication** — a given (error, digest) pair is reported at most
+ *    once per mount. React StrictMode and re-renders can fire the effect
+ *    multiple times for the same failure, which would inflate error counts
+ *    and trigger duplicate alerting.
+ * 4. **Fail-safe reporting** — if the sink throws (network down, quota
+ *    exceeded), the boundary must still render the recovery UI and must
+ *    not re-throw. Observability failure must never take down the error
+ *    page itself. The failure is surfaced to the console only.
+ * 5. **Reset guard** — `onAction` is only wired when `reset` is actually
+ *    callable. A missing/non-function `reset` must not produce a broken
+ *    button that throws on click.
+ *
+ * These boundaries are considered public behavior: any change to them
+ * requires a test update in `app/error.test.js`.
  */
 
-function safeReportError(error, context) {
-  // Defensive wrapper: the boundary must never crash while reporting an
-  // error, otherwise the user would see a blank screen instead of the
-  // recovery UI. `reportError` already has an internal failsafe, but we
-  // keep this guard so future regressions in the reporter cannot escape.
+// Maximum length of a digest we are willing to forward. Next.js digests
+// are short hashes; anything longer is likely a payload and we drop it rather
+// than leak potentially sensitive data into the log sink.
+const MAX_DIGEST_LENGTH = 256;
+
+// Maximum length of a normalized message we keep on the Error object.
+const MAX_MESSAGE_LENGTH = 2000;
+
+// Maximum length of a normalized name we keep on the Error object.
+const MAX_NAME_LENGTH = 128;
+
+/**
+ * Coerce any thrown value into a real `Error` instance.
+ *
+ * React's error boundaries accept any thrown value. This helper ensures
+ * the observability sink always receives an `Error` with a usable message,
+ * while preserving the original value for debugging.
+ *
+ * @param {unknown} value
+ * @returns {Error}
+ */
+export function normalizeError(value) {
+  if (value instanceof Error) {
+    return value;
+  }
+
+  const fallbackMessage = "Unknown error";
+  let message = fallbackMessage;
+
+  if (typeof value === "string") {
+    message = value || fallbackMessage;
+  } else if (value === null || typeof value === "undefined") {
+    message = fallbackMessage;
+  } else if (typeof value === "object") {
+    // Prefer a string `message` field if present (e.g. fetch rejections).
+    if (typeof value.message === "string" && value.message) {
+      message = value.message;
+    } else {
+      try {
+        message = JSON.stringify(value);
+      } catch {
+        // Circular references or exotic objects — fall back to the generic
+        // message rather than throwing inside the boundary.
+        message = fallbackMessage;
+      }
+    }
+  } else {
+    // Numbers, booleans, bigints, symbols, functions.
+    try {
+      message = String(value);
+    } catch {
+      message = fallbackMessage;
+    }
+  }
+
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    message = `${message.slice(0, MAX_MESSAGE_LENGTH)…`;
+  }
+
+  const normalized = new Error(message);
+  normalized.name = "NormalizedError";
+  // Preserve the original thrown value for debugging without exposing it
+  // to the reporter by default.
+  normalized.cause = value;
+  return normalized;
+}
+
+/**
+ * Return a sanitized digest string, or `undefined` when the digest is
+ * missing, empty, non-string, or implausibly long.
+ *
+ * @param {unknown} digest
+ * @returns {string | undefined}
+ */
+export function sanitizeDigest(digest) {
+  if (typeof digest !== "string") {
+    return undefined;
+  }
+  const trimmed = digest.trim();
+  if (!trimmed || trimmed.length > MAX_DIGEST_LENGTH) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+/**
+ * Build a stable dedupe key for an error report.
+ *
+ * The key is derived from the normalized name/message and the sanitized
+ * digest. Two different error objects with the same identity are considered
+ * the same failure for dedupe purposes.
+ *
+ * @param {Error} error
+ * @param {string | undefined} digest
+ * @returns {string}
+ */
+export function buildDedupeKey(error, digest) {
+  const name = typeof error.name === "string" ? error.name.slice(0, MAX_NAME_LENGTH) : "";
+  const message = typeof error.message === "string" ? error.message : "";
+  return `${name}\u0000${message}\u0000${digest ?? ""}`;
+}
+
+/**
+ * Report an error to the observability sink without ever throwing.
+ *
+ * @param {Error} error
+ * @param {object} context
+ * @returns {boolean} `true` when the report was delivered, `false` otherwise.
+ */
+export function safelyReportError(error, context) {
   try {
     reportError(error, context);
-  } catch (errorReportingError) {
-    // Last-resort diagnostic. Intentionally logs only the failure message
-    // and the original error message — not the full objects — to avoid
-    // leaking sensitive data if the reporter itself is broken.
-    console.error(
-      "[ErrorBoundary] reportError threw:",
-      errorReportingError instanceof Error ? errorReportingError.message : "[non-Error thrown]",
-      "[last-resort] original error message:",
-      error instanceof Error ? error.message : "[non-Error thrown]"
-    );
+    return true;
+  } catch (reportingError) {
+    // Observability failure must not take down the error page. We surface
+    // the failure to the console only, and never re-throw.
+    if (typeof console !== "undefined" && typeof console.error === "function") {
+      console.error(
+        "[error-boundary] failed to report error to observability sink",
+        reportingError,
+      );
+    }
+    return false;
   }
 }
 
 export default function GlobalError({ error, reset }) {
-  // Next.js can render the boundary with a non-Error value (e.g. a thrown
-  // string or `null`). Normalize to an Error so downstream consumers and
-  // the reporter always receive a consistent shape. This is part of the
-  // compatibility contract: callers can rely on `reportError` receiving an
-  // `Error` instance.
-  const normalizedError = normalizeError(error);
-
-  // Only the digest is forwarded as context. The digest is a server-generated
-  // opaque identifier and is safe to log. We do not forward the raw error
-  // object as context because it may contain request data.
-  const digest = normalizedDigest(normalizedError);
+  // Track the last reported dedupe key so re-renders and StrictMode
+  // double-invocations do not double-report the same failure.
+  const lastReportedKey = useRef(null);
 
   useEffect(() => {
-    if (!error) {
+    const normalized = normalizeError(error);
+    const digest = sanitizeDigest(normalized.digest ?? error?.digest);
+    const key = buildDedupeKey(normalized, digest);
+
+    if (lastReportedKey.current === key) {
+      // Duplicate submission for the same failure — skip the sink.
       return;
     }
-    // Invariant 1 — report each error instance once (StrictMode-safe).
-    if (lastReportedRef.current === error) {
-      return;
-    }
-    lastReportedRef.current = error;
+    lastReportedKey.current = key;
+
     // Forward to the configurable observability sink.
     // `error.digest` is the server-side identifier so production logs can
     // be correlated without exposing raw stack traces to the client.
-    safeReportError(normalizedError, { digest });
-  }, [normalizedError, digest]);
+    safelyReportError(normalized, digest ? { digest } : undefined);
+  }, [error]);
 
-  // Reset is optional in the Next.js contract and may be missing in
-  // non-Next.js environments (tests, storybook). Provide a safe no-op
-  // fallback so the button remains functional and never throws.
-  const safeReset = typeof reset === "function" ? reset : () => {};
-
-  const handleRecover = useCallback(() => {
-    // Invariant 2 — ignore re-entrant recovery attempts.
-    if (recoveringRef.current) {
-      return;
-    }
-    recoveringRef.current = true;
-
-    try {
-      // Invariant 3 — a boundary must never throw while handling a failure.
-      if (typeof reset !== "function") {
-        throw new TypeError("Error boundary reset handler is not callable.");
-      }
-      reset();
-    } catch (recoveryError) {
-      reportError(recoveryError, {
-        digest: recoveryError?.digest,
-        boundary: "route-error-recovery",
-      });
-      setRecoveryFailed(true);
-    } finally {
-      recoveringRef.current = false;
-    }
-  }, [reset]);
+  // Only wire the recovery action when `reset` is actually callable.
+  // A missing or non-function `reset` must not produce a button that
+  // throws on click.
+  const hasReset = typeof reset === "function";
 
   return (
     <div
-      className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-4 py-16"
+      className="flex min-h-screen flex-col  items-center justify-center bg-slate-950 px-4 py-16"
       data-testid="error-boundary-page"
     >
       <main id="main-content" className="w-full max-w-lg" aria-labelledby="error-boundary-heading">
@@ -154,7 +244,7 @@ export default function GlobalError({ error, reset }) {
           details={recoveryFailed ? ERROR_RECOVERY_FAILED : undefined}
           actionLabel={copy.error.actionLabel}
           previewLabel={copy.error.previewLabel}
-          onAction={safeReset}
+          onAction={hasReset ? reset : undefined}
         />
       </main>
     </div>
