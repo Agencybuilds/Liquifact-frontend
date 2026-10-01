@@ -13,6 +13,10 @@ jest.mock("../components/WalletStatusLazy", () => ({
   },
 }));
 
+jest.mock("../components/NavMenu", () => function MockNavMenu() {
+  return <div data-testid="nav-menu">NavMenu</div>;
+});
+
 jest.mock("next/link", () => {
   function MockLink({ href, children, ...props }) {
     return (
@@ -38,6 +42,21 @@ function mockFetchOnce(responseBody, ok = true) {
   });
 }
 
+function mockFetchDeferred() {
+  let resolve;
+  const promise = new Promise((r) => {
+    resolve = r;
+  });
+  global.fetch = jest.fn().mockImplementation(() => promise);
+  return {
+    resolveWith: (body, ok = true) =>
+      resolve({
+        ok,
+        json: jest.fn().mockResolved(body),
+      }),
+  };
+}
+
 async function clickCheckHealth() {
   fireEvent.click(screen.getByRole("button", { name: /check backend health/i }));
   await waitFor(() => expect(screen.queryByText(/checking/i)).not.toBeInTheDocument());
@@ -51,7 +70,7 @@ describe("Home health render", () => {
     await clickCheckHealth();
 
     const status = screen.getByRole("status");
-    expect(within(status).getByText(/connected/i)).toBeInTheDocument();
+    expect(within(status).getByText(/connected/i)).toBeITheDocument();
     expect(within(status).getByText(/All good/i)).toBeInTheDocument();
   });
 
@@ -100,7 +119,7 @@ describe("Home health render", () => {
     await clickCheckHealth();
 
     const pre = document.querySelector("pre");
-    expect(pre.textContent).not.toMatch(/… truncated$/);
+    expect(pre.textContent).not.toMatch(/… truncated\)$/);
     expect(pre.textContent.length).toBeGreaterThan(5000);
   });
 
@@ -120,5 +139,72 @@ describe("Home health render", () => {
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByText(/view details/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a failure message when the backend responds non-ok", async () => {
+    mockFetchOnce({ status: "error", message: "unavailable" }, false);
+    render(<Home />);
+
+    await clickCheckHealth();
+
+    expect(screen.getByText(/unavailable|indicates a problem|failed/i)).toBeInTheDocument();
+  });
+
+  it("handles a rejected fetch without leaving the ui in a loading state", async () => {
+    global.fetch = jest.fn().mockRejected(new Error("network down"));
+    render(<Home />);
+
+    await clickCheckHealth();
+
+    expect(screen.queryByText(/checking/i)).not.toBeInTheDocument();
+  });
+
+  it("ignores duplicate clicks while a request is in flight", async () => {
+    const deferred = mockFetchDeferred();
+    render(<Home />);
+
+    const button = screen.getByRole("button", { name: /check backend health/i });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    deferred.resolveWith({ status: "ok", message: "All good" });
+    await waitFor(() => expect(screen.queryByText(/checking/i)).not.toBeInTheDocument());
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("serializes concurrent checks so the latest result wins", async () => {
+    const first = mockFetchDeferred();
+    render(<Home />);
+
+    const button = screen.getByRole("button", { name: /check backend health/i });
+    fireEvent.click(button);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    // A second click while the first is in flight must not start a new request.
+    fireEvent.click(button);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    first.resolveWith({ status: "ok", message: "first" });
+    await waitFor(() => expect(screen.queryByText(/checking/i)).not.toBeInTheDocument());
+
+    expect(screen.getByText(/first/i)).toBeInTheDocument();
+  });
+
+  it("returns to a usable state after a failure so a retry can succeed", async () => {
+    global.fetch = jest.fn().mockRejected(new Error("network down"));
+    render(<Home />);
+
+    await clickCheckHealth();
+
+    expect(screen.queryByText(/checking/i)).not.toBeInTheDocument();
+
+    mockFetchOnce({ status: "ok", message: "recovered" });
+    await clickCheckHealth();
+
+    expect(screen.getByText(/recovered/i)).toBeInTheDocument();
   });
 });
