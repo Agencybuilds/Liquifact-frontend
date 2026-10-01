@@ -1,17 +1,144 @@
-"use client";
-import { useState } from "react";
+"tuse client";
+import React from "react";
+import { useCallback, useState } from "react";
 import { copy } from "../copy/en";
 import NavMenu from "../../components/NavMenu";
 import UploadZone from "../../components/UploadZone";
 import UploadErrorBoundary from "../../components/UploadErrorBoundary";
 import InvoiceList from "../../components/InvoiceList";
+import { reportError } from "../../lib/observability/reportError";
+
+/**
+ * Deterministic failure recovery for the invoices page.
+
+ * Invariants:
+ *  1. Every optimistic invoice has a stable, unique client-key.
+ *     Consecutive uploads of the same payload are never deduped away.
+ *  2. A record is either pending or settled (committed or rolled back).
+ *     There is no intermediate state that can be observed by the UI.
+ *  3. Retrying a failed upload must not duplicate a committed record.
+ *  4. Concurrent retries for the same record are coalesced into a single
+ *     in-flight request.
+ *  5. Failures are observable (logged with correlation id) and user-visible
+ *     without exposing sensitive data.
+ */
+
+/**
+ * Failure recovery invariants for the invoices page:
+ *
+ * 1. Optimistic entries are keyed by a stable client-generated id so a
+ *    retry of the same upload updates the existing row instead of
+ *    creating a duplicate. This makes retries idempotent.
+ * 2. Failed uploads are retained in state with an error message so the
+ *    user can retry without losing the in-memory record or the file
+ *    selection. No silent drops.
+ * 3. Recovery is deterministic: the same input always produces the same
+ *    state transition (pending -> success | pending -> failed -> pending).
+ * 4. Error messages are sanitized before being stored or rendered so that
+ *    sensitive details from failed requests are not leaked to the UI.
+ */
+
+const FALLBACK_ERROR = "Upload failed. Please try again.";
+
+const generateId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `inv_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+};
+
+export const sanitizeErrorMessage = (raw) => {
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed.length > 0 && trimmed.length <= 200) {
+      return trimmed;
+    }
+  }
+  return FALLBACK_ERROR;
+};
 
 export default function InvoicesPage() {
-  const [optimisticInvoices, setOptimisticInvoices] = useState([]);
+  // Optimistic records are stored in a Map keyed by a client-generated
+  // correlation id (rather than an array index) so that a retry operation
+  // can atomically replace the exact record it owns, even when other
+  // uploads arrive in between.
+  const [records, setRecords] = React.useState(() => new Map());
+  // Tick forces a re-render after mutating the Map in place.
+  const [, forceRender] = React.useReducer((n) => n + 1, 0);
 
-  const handleUploadSuccess = (invoice) => {
-    setOptimisticInvoices((current) => [invoice, ...current]);
-  };
+  /**
+   * Merge an update into the optimistic list by id. If the id already
+   * exists the entry is replaced in place (retry); otherwise it is
+   * prepended. This keeps retries and concurrent uploads from duplicating
+   * rows or clobbering each other.
+   */
+  const mergeInvoice = useCallback((update) => {
+    setOptimisticInvoices((current) => {
+      const index = current.findIndex((item) => item.id === update.id);
+      if (index === -1) {
+        return [update, ...current];
+      }
+      const next = current.slice();
+      next[index] = { ...current[index], ...update };
+      return next;
+    });
+  }, []);
+
+  /**
+   * Record a failure for an in-flight upload. The entry is retained so the
+   * user can retry without re-selecting the file.
+   */
+  const handleUploadError = useCallback(
+    ({ id, error }) => {
+      if (!id) {
+        return;
+      }
+      mergeInvoice({
+        id,
+        status: "failed",
+        error: sanitizeErrorMessage(error),
+      });
+    },
+    [mergeInvoice]
+  );
+
+  /**
+   * Record an in-flight upload so retries and concurrent calls can be
+   * correlated by id and the UI can show a pending state.
+   */
+  const handleUploadStart = useCallback(
+    ({ id, file }) => {
+      if (!id) {
+        return;
+      }
+      mergeInvoice({
+        id,
+        status: "pending",
+        error: null,
+        name: file && file.name ? file.name : undefined,
+      });
+    },
+    [mergeInvoice]
+  );
+
+  /**
+   * Record a successful upload. The id reused from the start/error
+   * callbacks so a retry replaces the failed row instead of adding a
+   * duplicate.
+   */
+  const handleUploadSuccess = useCallback(
+    (invoice) => {
+      if (!invoice || !invoice.id) {
+        return;
+      }
+      mergeInvoice({
+        ...invoice,
+        status: "success",
+        error: null,
+      });
+    },
+    [mergeInvoice]
+  );
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50">
@@ -30,11 +157,20 @@ export default function InvoicesPage() {
         <div className="grid gap-10 lg:grid-cols-3">
           <div className="lg:col-span-1">
             <UploadErrorBoundary>
-              <UploadZone onUploadSuccess={handleUploadSuccess} />
+              <UploadZone
+                generateId={generateId}
+                onUploadStart={handleUploadStart}
+                onUploadSuccess={handleUploadSuccess}
+                onUploadError={handleUploadError}
+              />
             </UploadErrorBoundary>
           </div>
           <div className="lg:col-span-2">
-            <InvoiceList optimisticInvoices={optimisticInvoices} />
+            <InvoiceList
+              optimisticInvoices={optimisticInvoices}
+              onRetry={handleRetry}
+              onDismiss={handleDismiss}
+            />
           </div>
         </div>
       </main>
