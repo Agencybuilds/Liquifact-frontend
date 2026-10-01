@@ -13,12 +13,7 @@ import NavMenuSkeleton from "../../components/NavMenuSkeleton";
 
 export default function InvestLoading() {
   return (
-    <div
-      className="min-h-screen bg-slate-950 text-slate-100"
-      aria-busy="true"
-      data-testid="invest-loading"
-    >
-      {/* ---- Reusable nav skeleton ---- */}
+    <div className="min-h-screen bg-slate-950 text-slate-100" aria-busy="true" data-testid="invest-loading">
       <NavMenuSkeleton />
 
       <main className="max-w-4xl mx-auto px-6 py-12">
