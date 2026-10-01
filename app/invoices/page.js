@@ -1,5 +1,6 @@
-"use client";
-import { useCallback, useEffect, useRef } from "react";
+"tuse client";
+import React from "react";
+import { useCallback, useState } from "react";
 import { copy } from "../copy/en";
 import NavMenu from "../../components/NavMenu";
 import UploadZone from "../../components/UploadZone";
@@ -22,6 +23,40 @@ import { reportError } from "../../lib/observability/reportError";
  *     without exposing sensitive data.
  */
 
+/**
+ * Failure recovery invariants for the invoices page:
+ *
+ * 1. Optimistic entries are keyed by a stable client-generated id so a
+ *    retry of the same upload updates the existing row instead of
+ *    creating a duplicate. This makes retries idempotent.
+ * 2. Failed uploads are retained in state with an error message so the
+ *    user can retry without losing the in-memory record or the file
+ *    selection. No silent drops.
+ * 3. Recovery is deterministic: the same input always produces the same
+ *    state transition (pending -> success | pending -> failed -> pending).
+ * 4. Error messages are sanitized before being stored or rendered so that
+ *    sensitive details from failed requests are not leaked to the UI.
+ */
+
+const FALLBACK_ERROR = "Upload failed. Please try again.";
+
+const generateId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `inv_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+};
+
+export const sanitizeErrorMessage = (raw) => {
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed.length > 0 && trimmed.length <= 200) {
+      return trimmed;
+    }
+  }
+  return FALLBACK_ERROR;
+};
+
 export default function InvoicesPage() {
   // Optimistic records are stored in a Map keyed by a client-generated
   // correlation id (rather than an array index) so that a retry operation
@@ -31,139 +66,79 @@ export default function InvoicesPage() {
   // Tick forces a re-render after mutating the Map in place.
   const [, forceRender] = React.useReducer((n) => n + 1, 0);
 
-  // In-flight requests keyed by correlation id. This guarantees that
-  // concurrent retries for the same record coalesce into a single call.
-  const inflightRef = React.useRef(new Map());
-  // Monotonic counter for correlation ids. Deterministic within a session.
-  const seqNumRef = React.useRef(0);
-  // Tracks whether the component is still mounted so async callbacks
-  // never touch state after unmount.
-  const mountedRef = React.useRef(true);
-
-  React.useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
+  /**
+   * Merge an update into the optimistic list by id. If the id already
+   * exists the entry is replaced in place (retry); otherwise it is
+   * prepended. This keeps retries and concurrent uploads from duplicating
+   * rows or clobbering each other.
+   */
+  const mergeInvoice = useCallback((update) => {
+    setOptimisticInvoices((current) => {
+      const index = current.findIndex((item) => item.id === update.id);
+      if (index === -1) {
+        return [update, ...current];
+      }
+      const next = current.slice();
+      next[index] = { ...current[index], ...update };
+      return next;
+    });
   }, []);
 
-  const mutateRecord = React.useCallback((id, updater) => {
-    const next = new Map(records);
-    const current = next.get(id);
-    if (!current) return;
-    next.set(id, { ...current, ...updates });
-    setRecords(next);
-  }, [records]);
-
   /**
-   * Attempts to commit an optimistic record. Returns a promise that
-   * resolves on success and rejects on failure. The record is always
-   * left in a consistent state: either committed or rolled back.
+   * Record a failure for an in-flight upload. The entry is retained so the
+   * user can retry without re-selecting the file.
    */
-  const commitRecord = React.useCallback(async (id) => {
-    // Coalesce concurrent retries for the same record.
-    if (inflightRef.current.has(id)) {
-      return inflightRef.current.get(id);
-    }
-
-    const promise = (async () => {
-      const record = records.get(id);
-      if (!record) return;
-
-      mutateRecord(id, { status: "pending", error: null });
-
-      try {
-        // The upload handler is the authoritative commit point.
-        // It must be idempotent for a given correlation id.
-        await record.commit();
-        if (!mountedRef.current) return;
-        mutateRecord(id, { status: "committed", error: null });
-      } catch (err) {
-        if (!mountedRef.current) return;
-        // Roll back to a recoverable state and surface a diagnosable
-        // error. We never drop the record here - the user can retry.
-        mutateRecord(id, { status: "failed", error: err });
-        reportError(err, {
-          scope: "invoices.upload",
-          correlationId: id,
-        });
-        throw err;
-      } finally {
-        inflightRef.current.delete(id);
+  const handleUploadError = useCallback(
+    ({ id, error }) => {
+      if (!id) {
+        return;
       }
-    })();
-
-    inflightRef.current.set(id, promise);
-    return promise;
-  }, [mutateRecord, records]);
+      mergeInvoice({
+        id,
+        status: "failed",
+        error: sanitizeErrorMessage(error),
+      });
+    },
+    [mergeInvoice]
+  );
 
   /**
-   * Handles a successful upload. The `invoice` payload is added as an
-   * optimistic record with a deterministic correlation id and a commit
-   * function that the page owns. This keeps the UI in control of failure
-   * recovery rather than relying on the upload widget.
+   * Record an in-flight upload so retries and concurrent calls can be
+   * correlated by id and the UI can show a pending state.
    */
-  const handleUploadSuccess = React.useCallback(
-    (invoice, options = {}) => {
-      const id = options.correlationId || `inv_${++seqNumRef.current}`;
-      const commit =
-        typeof options.commit === "function"
-          ? options.commit
-          : async () => {};
-
-      const next = new Map(records);
-      next.set(id, {
+  const handleUploadStart = useCallback(
+    ({ id, file }) => {
+      if (!id) {
+        return;
+      }
+      mergeInvoice({
         id,
-        invoice,
         status: "pending",
         error: null,
-        commit,
+        name: file && file.name ? file.name : undefined,
       });
-      setRecords(next);
-
-      // Kick off the commit asynchronously. Failures are recorded on the
-      // record and never escape as unhandled rejections.
-      commitRecord(id).catch(() => {});
-
-      return id;
     },
-    [commitRecord, records]
+    [mergeInvoice]
   );
 
   /**
-   * Retries a failed record. The correlation id is preserved so the
-   * commit is idempotent and can't create a duplicate.
+   * Record a successful upload. The id reused from the start/error
+   * callbacks so a retry replaces the failed row instead of adding a
+   * duplicate.
    */
-  const handleRetry = React.useCallback(
-    (id) => {
-      commitRecord(id).catch(() => {});
+  const handleUploadSuccess = useCallback(
+    (invoice) => {
+      if (!invoice || !invoice.id) {
+        return;
+      }
+      mergeInvoice({
+        ...invoice,
+        status: "success",
+        error: null,
+      });
     },
-    [commitRecord]
+    [mergeInvoice]
   );
-
-  /**
-   * Dismisses a failed record after the user acknowledges the error.
-   * This is the only path that removes a record from the list.
-   */
-  const handleDismiss = React.useCallback(
-    (id) => {
-      const next = new Map(records);
-      const record = next.get(id);
-      if (!record || record.status === "pending") return;
-      next.delete(id);
-      setRecords(next);
-    },
-    [records]
-  );
-
-  const optimisticInvoices = React.useMemo(() => {
-    return Array.from(records.values()).map((record) => ({
-      ...record.invoice,
-      _correlationId: record.id,
-      _status: record.status,
-      _error: record.error,
-    }));
-  }, [records]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50">
@@ -182,7 +157,12 @@ export default function InvoicesPage() {
         <div className="grid gap-10 lg:grid-cols-3">
           <div className="lg:col-span-1">
             <UploadErrorBoundary>
-              <UploadZone onUploadSuccess={handleUploadSuccess} />
+              <UploadZone
+                generateId={generateId}
+                onUploadStart={handleUploadStart}
+                onUploadSuccess={handleUploadSuccess}
+                onUploadError={handleUploadError}
+              />
             </UploadErrorBoundary>
           </div>
           <div className="lg:col-span-2">

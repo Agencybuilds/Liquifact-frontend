@@ -7,21 +7,28 @@
  * is streaming. Delegates the upload area skeleton to the reusable
  * UploadSkeleton component so both share the same markup and stay in sync.
  *
- * ## State invariants
- * This component is a pure, stateless loading shell. It owns no mutable
- * state and must never introduce side effects. The invariants it guarantees:
+ * ## Deterministic failure recovery
  *
- *  1. Determinism — given the same props the output is byte-for-byte
- *     identical. The component accepts no props and reads no external
- *     state, so concurrent renders and retries cannot diverge.
- *  2. Accessibility — the root carries `aria-busy="true"` and an
- *     associated `data-testid` hook so tests and assistive technology
- *     can reliably locate the loading region. The `sr-only` announcement
- *     is owned by `UploadSkeleton` and must not be duplicated here.
- *  3. No data leakage — the skeleton renders only placeholder markup.
- *     It must never read or render user data, tokens, or any sensitive
- *     values.
- *  4. No layout shift — the skeleton mirrors the real page sizes.
+ * This segment is a pure, side-effect-free presentational component: it
+ * never fetches, mutates, or persists anything. That invariant is what
+ * makes failure recovery deterministic — there is no partial state to
+ * lose and no concurrent execution to race against. To keep it that way
+ * while still being observable and recoverable, this file:
+ *
+ * 1. Guarantees the component is a deterministic function of its props.
+ *    It accepts no props, so two renders of the same input always produce
+ *    the same output.
+ * 2. Surfaces a stable `data-testid` hook so tests and monitoring can
+ *    assert the loading boundary is active without inspecting internals.
+ * 3. Declares `aria-busy` and `aria-live` so assistive technology and
+ *    automation can observe the transient state and recover from it.
+ * 4. Does not expose sensitive data: no invoice content, no credentials,
+ *    no user-specific identifiers are rendered or logged.
+ *
+ * Because the component is pure, a failure in any downstream data load
+ * cannot corrupt this segment; the App Router will replace it with the
+ * page or its error boundary once the segment resolves. Retries are
+ * idempotent because re-rendering this file has no observable side effect.
  *
  * @see components/UploadSkeleton.jsx — reusable upload skeleton
  *
@@ -38,63 +45,24 @@
  *   that case it falls back to an inline skeleton that preserves the same
  *   test id and aria-busy contracts.
  */
-/* eslint-disable react/prop-types */
-import UploadSkeleton from "../../components/UploadSkeleton";
+import UploadSkeleton from "../../components/UploadSkeleton.jsx";
 
 /**
- * Fallback skeleton used when the reusable UploadSkeleton cannot be
- * rendered. Preserves the public contracts (test id, aria-busy, sr-only
- * announcement) so downstream consumers and tests continue to work.
+ * Stable test hook for the invoices loading boundary.
+ * @type {string}
  */
-function UploadSkeletonFallback() {
-  // eslint-disable-next-line react/react-in-jsx-scope
-  return (
-    <div
-      data-testid="upload-skeleton"
-      aria-busy="true"
-      aria-live="polite"
-      className="space-y-4 rounded border border-dashed border-slate-700 bg-slate-900/40 p-6"
-    >
-      <span className="sr-only">Upload form loading, please wait</span>
-      <div className="h-10 w-3/4 rounded bg-slate-800 animate-pulse" />
-      <div className="h-24 w-full rounded bg-slate-800 animate-pulse" />
-      <div className="h-11 w-40 rounded-full bg-slate-700 animate-pulse" />
-    </div>
-  );
-}
+export const INVOICES_LOADING_TESTID = "invoices-loading";
 
 /**
- * Resolve the UploadSkeleton import into a renderable component.
- * Handles the common interop cases:
- *   - default export (Current contract)
- *   - named export `UploadSkeleton`
- *   - CommonJS wrapper with `.default` or `.UploadSkeleton`
- * Returns `null` when no valid renderable export is found, so the caller
- * can fall back to the inline skeleton without throwing.
+ * Route-level loading UI for /invoices.
+ *
+ * Invariants:
+ * - Pure and deterministic: no props, no state, no effects, no network.
+ * - Always marks the segment as busy and live for assistive technology.
+ * - Never renders user or invoice data.
+ *
+ * @returns {JSX.Element}
  */
-function resolveUploadSkeleton() {
-  // eslint-disable-next-line no-unused-vars
-  const candidates = [
-    UploadSkeleton,
-    UploadSkeleton && UploadSkeleton.default,
-    UploadSkeleton && UploadSkeleton.UploadSkeleton,
-  ];
-
-  for (const candidate of candidates) {
-    if (typeof candidate === "function") {
-      return candidate;
-    }
-    if (candidate && typeof candidate === "object") {
-      // React.memo / React.forwardRef expose a renderable object.
-      if (typeof candidate.$$typeof === "symbol" || candidate.render) {
-        return candidate;
-      }
-    }
-  }
-
-  return null;
-}
-
 export default function InvoicesLoading() {
   // eslint-disable-next-line no-unused-vars
   const ResolvedUploadSkeleton = resolveUploadSkeleton();
@@ -104,8 +72,8 @@ export default function InvoicesLoading() {
     <div
       className="min-h-screen bg-slate-950 text-slate-100"
       aria-busy="true"
-      data-testid="invoices-loading"
-      data-compatibility="invoices-loading-v1"
+      aria-live="polite"
+      data-testid={INVOICES_LOADING_TESTID}
     >
       {/* ---- Header ----- */}
       <header className="border-b border-slate-800 px-6 py-4 flex items-center justify-between">

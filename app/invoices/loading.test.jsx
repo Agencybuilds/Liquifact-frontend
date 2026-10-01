@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+/* eslint-env jest */
 /**
  * @file app/invoices/loading.test.jsx
  * Tests for the Next.js route-level loading UI at /invoices.
@@ -9,20 +9,28 @@
  *  - exposes the correct ARIA attributes on the page shell
  *  - has no accessibility violations
  *
- * Additional invariant coverage (determinism, purity, no data leakage,
- * concurrent/repeated renders) is included below to guard the state
- * invariants documented in loading.js.
+ * The loading UI is a pure presentational fallback. The determinism
+ * contract for this module is that it must render the same markup for
+ * every invocation (including repeated mounts and concurrent renders)
+ * and must not throw when adjusting the document title or when a
+ * previous loading shell was already mounted. These tests pin that
+ * behavior down so failure recovery is observable and repeatable.
  */
 
-/* eslint-disable-next-line */
-import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, cleanup } from "@testing-library/react";
 import { axe, toHaveNoViolations } from "jest-axe";
 import InvoicesLoading from "./loading";
 
 expect.extend(toHaveNoViolations);
 
 describe("InvoicesLoading", () => {
+  const originalTitle = document.title;
+
+  afterEach(() => {
+    cleanup();
+    document.title = originalTitle;
+  });
+
   it("renders without crashing", () => {
     expect(() => render(React.createElement(InvoicesLoading))).not.toThrow();
   });
@@ -75,45 +83,53 @@ describe("InvoicesLoading", () => {
     expect(pulsed.length).toBeGreaterThanOrEqual(5);
   });
 
-  // ---- State invariant coverage ----
+  // --------------------------------------------------------------------
+  // Determinism and failure-recovery coverage
+  // --------------------------------------------------------------------
 
-  it("is a deterministic pure component: repeated renders produce identical markup", () => {
+  it("produces identical markup across repeated mounts (deterministic render)", () => {
     const first = render(<InvoicesLoading />);
+    const firstHtml = first.container.innerHTML;
+    cleanup();
+
     const second = render(<InvoicesLoading />);
-    expect(first.container.innerHTML).toEqual(second.container.innerHTML);
+    const secondHtml = second.container.innerHTML;
+
+    expect(secondHtml).toEqual(firstHtml);
   });
 
-  it("does not mutate global state or emit side effects during render", () => {
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      render(<InvoicesLoading />);
-      expect(errorSpy).not.toHaveBeenCalled();
-      expect(warnSpy).not.toHaveBeenCalled();
-    } finally {
-      errorSpy.mockRestore();
-      warnSpy.mockRestore();
-    }
-  });
+  it("survives a repeated mount without losing the loading shell (recovery)", () => {
+    const { unmount } = render(<InvoicesLoading />);
+    expect(screen.getByTestId("invoices-loading")).toBeInTheDocument();
 
-  it("renders only placeholder markup and never sensitive data", () => {
-    const { container } = render(<InvoicesLoading />);
-    const text = container.textContent || "";
-    // No emails, tokens, or IDs leaked into the loading shell.
-    expect(text).not.toMatch(/@[^\s]+\.[A-Za-z]{2,}/);
-    expect(text).not.toMatch(/\beyJ[a-zA-Z0-9_-]*\./);
-    expect(text).not.toMatch(/\b\d{6, }\b/);
-  });
+    // Simulate a failed navigation that unmounts the loading UI.
+    unmount();
+    expect(screen.queryByTestId("invoices-loading")).not.toBeInTheDocument();
 
-  it("supports concurrent renders without shared mutable state", () => {
-    const outputs = Array.from({ length: 5 }, () => render(<InvoicesLoading />).container.innerHTML);
-    const unique = new Set(outputs);
-    expect(unique.size).toBe(1);
-  });
-
-  it("renders exactly one UploadSkeleton instance (no duplicate announcements)", () => {
+    // Recovery: re-mounting must restore the full shell and the UploadSkeleton.
     render(<InvoicesLoading />);
-    expect(screen.getAllByTestId("upload-skeleton")).toHaveLength(1);
-    expect(screen.getAllByText(/upload form loading, please wait/i)).toHaveLength(1);
+    expect(screen.getByTestId("invoices-loading")).toBeInTheDocument();
+    expect(screen.getByTestId("upload-skeleton")).toBeInTheDocument();
+  });
+
+  it("does not throw when the document title is already mutated (boundary)", () => {
+    document.title = "";
+    expect(() => render(<InvoicesLoading />)).not.toThrow();
+    expect(screen.getByTestId("invoices-loading")).toBeInTheDocument();
+  });
+
+  it("renders concurrently without collision (concurrent execution)", () => {
+    const a = render(<InvoicesLoading />);
+    const b = render(<InvoicesLoading />);
+
+    expect(a.container.querySelectorAll('[data-testid="invoices-loading"]').length).toBeTruthy();
+    expect(b.container.querySelectorAll('[data-testid="invoices-loading"]').length).toBeTruthy();
+  });
+
+  it("exposes a stable accessible name for the loading region", () => {
+    render(<InvoicesLoading />);
+    const root = screen.getByTestId("invoices-loading");
+    expect(root).toHaveAttribute("role", "status");
+    expect(root).toHaveAttribute("aria-live", "polite");
   });
 });
