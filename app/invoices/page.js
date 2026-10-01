@@ -1,6 +1,5 @@
-"tuse client";
-import React from "react";
-import { useCallback, useState } from "react";
+"use client";
+import { useCallback, useRef, useState } from "react";
 import { copy } from "../copy/en";
 import NavMenu from "../../components/NavMenu";
 import UploadZone from "../../components/UploadZone";
@@ -57,94 +56,78 @@ export const sanitizeErrorMessage = (raw) => {
   return FALLBACK_ERROR;
 };
 
-export default function InvoicesPage() {
-  // Optimistic records are stored in a Map keyed by a client-generated
-  // correlation id (rather than an array index) so that a retry operation
-  // can atomically replace the exact record it owns, even when other
-  // uploads arrive in between.
-  const [records, setRecords] = React.useState(() => new Map());
-  // Tick forces a re-render after mutating the Map in place.
-  const [, forceRender] = React.useReducer((n) => n + 1, 0);
+/**
+ * State invariants for the invoices page optimistic list.
+ *
+ * 1. The optimistic list is an append-only log of uploads for this mounted page.
+ *    Entries are never reordered or mutated in place; new entries are prepended.
+ * 2. Every entry has a stable, unique identity. Duplicate uploads of the
+ *    same invoice must not create duplicate entries or corrupt the list.
+ * 3. Only valid invoice objects (non-null, object, with a non-empty id)
+ *    are accepted. Invalid input is rejected with a user-visible error and
+ *    no state mutation.
+ * 4. Repeated or concurrent invocations of the upload handler must be
+ *    idempotent: the same invoice id is only accepted once.
+ * 5. The list is bounded to a maximum size to avoid unbounded growth.
+ */
 
-  /**
-   * Merge an update into the optimistic list by id. If the id already
-   * exists the entry is replaced in place (retry); otherwise it is
-   * prepended. This keeps retries and concurrent uploads from duplicating
-   * rows or clobbering each other.
-   */
-  const mergeInvoice = useCallback((update) => {
+const MAX_OPTIMISTIC_INVOICES = 200;
+
+function isValidInvoice(invoice) {
+  if (invoice === null || typeof invoice !== "object" || Array.isArray(invoice)) {
+    return false;
+  }
+  const { id } = invoice;
+  if (typeof id === "string") {
+    return id.trim().length > 0;
+  }
+  if (typeof id === "number") {
+    return Number.isFinite(id);
+  }
+  return false;
+}
+
+function normalizeId(id) {
+  return typeof id === "string" ? id.trim() : String(id);
+}
+
+export default function InvoicesPage() {
+  const [optimisticInvoices, setOptimisticInvoices] = useState([]);
+  const [invoiceError, setInvoiceError] = useState(null);
+  // Ref mirrors the current id set so concurrent/repeated calls in the
+  // same tick cannot bypass the dedupe check before React re-renders.
+  const knownIdsRef = useRef(new Set());
+
+  const handleUploadSuccess = useCallback((invoice) => {
+    if (!isValidInvoice(invoice)) {
+      setInvoiceError(
+        "The uploaded invoice did not include a valid identifier. Please try again."
+      );
+      return;
+    }
+
+    const normalizedId = normalizeId(invoice.id);
+    if (knownIdsRef.current.has(normalizedId)) {
+      // Idempotent no-op: the same invoice is already tracked.
+      setInvoiceError(null);
+      return;
+    }
+
+    knownIdsRef.current.add(normalizedId);
+    setInvoiceError(null);
     setOptimisticInvoices((current) => {
-      const index = current.findIndex((item) => item.id === update.id);
-      if (index === -1) {
-        return [update, ...current];
+      if (current.length >= MAX_OPTIMISTIC_INVOICES) {
+        return current;
       }
-      const next = current.slice();
-      next[index] = { ...current[index], ...update };
-      return next;
+      return [invoice, ...current];
     });
   }, []);
-
-  /**
-   * Record a failure for an in-flight upload. The entry is retained so the
-   * user can retry without re-selecting the file.
-   */
-  const handleUploadError = useCallback(
-    ({ id, error }) => {
-      if (!id) {
-        return;
-      }
-      mergeInvoice({
-        id,
-        status: "failed",
-        error: sanitizeErrorMessage(error),
-      });
-    },
-    [mergeInvoice]
-  );
-
-  /**
-   * Record an in-flight upload so retries and concurrent calls can be
-   * correlated by id and the UI can show a pending state.
-   */
-  const handleUploadStart = useCallback(
-    ({ id, file }) => {
-      if (!id) {
-        return;
-      }
-      mergeInvoice({
-        id,
-        status: "pending",
-        error: null,
-        name: file && file.name ? file.name : undefined,
-      });
-    },
-    [mergeInvoice]
-  );
-
-  /**
-   * Record a successful upload. The id reused from the start/error
-   * callbacks so a retry replaces the failed row instead of adding a
-   * duplicate.
-   */
-  const handleUploadSuccess = useCallback(
-    (invoice) => {
-      if (!invoice || !invoice.id) {
-        return;
-      }
-      mergeInvoice({
-        ...invoice,
-        status: "success",
-        error: null,
-      });
-    },
-    [mergeInvoice]
-  );
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50">
       <NavMenu />
 
-      <main className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-7xl px-4 py-10 sm$px-6 lg:px-8">
         <div className="space-y-2 mb-10">
           <h1 className="text-3xl font-bold tracking-tight text-slate-100 sm:text-4xl">
             {copy.invoices.title || "Invoices"}
@@ -164,6 +147,14 @@ export default function InvoicesPage() {
                 onUploadError={handleUploadError}
               />
             </UploadErrorBoundary>
+            {invoiceError ? (
+              <p
+                role="alert"
+                className="mt-4 rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200"
+              >
+                {invoiceError}
+              </p>
+            ) : null}
           </div>
           <div className="lg:col-span-2">
             <InvoiceList
