@@ -11,12 +11,13 @@ import { getMarketplaceHfref, sanitizeMarketplaceSearchParams } from "@/lib/mark
 // input handling.
 
 const mockSearchParams = jest.fn(() => new URLSearchParams());
+jconst mockReplace = jest.fn();
 
 jest.mock("next/navigation", () => ({
   __esModule: true,
   usePathname: () => "/invest",
   useSearchParams: () => mockSearchParams(),
-  useRouter: () => ({ replace: jest.fn() }),
+  useRouter: () => ({ replace: mockReplace }),
 }));
 
 jest.mock("next/link", () => {
@@ -85,7 +86,9 @@ describe("marketplace route state", () => {
 
     render(<InvestMarketplace loadInvoices={async () => mockInvoices} />);
 
-    await waitFor(() => expect(screen.getByRole("textbox", { name: /search by issuer name/i })).toHaveValue("Acme"));
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: /search by issuer name/i })).toHaveValue("Acme")
+    );
     expect(screen.getByRole("button", { name: "Open" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Funded" })).toHaveAttribute("aria-pressed", "true");
   });
@@ -109,7 +112,7 @@ describe("marketplace route state", () => {
     let resolveLoad: ((value: unknown) => void) | undefined;
     const loadInvoices = jest.fn(
       () =>
-        new Promise((resolve) => {
+        new Promise<typeof mockInvoices>((resolve) => {
           resolveLoad = resolve;
         })
     );
@@ -124,9 +127,9 @@ describe("marketplace route state", () => {
     expect(screen.getByRole("button", { name: "Funded" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Open" })).toHaveAttribute("aria-pressed", "false");
 
-    resolveLoad(mockInvoices);
+    resolveLoad?.(mockInvoices);
     await waitFor(() => expect(loadInvoices).toHaveBeenCalledTimes(1));
-    expect(screen.getByText("Bright Logistics GmbH")).toBeInTheDocument();
+    expect(screen.getByText("Bright Logistics GmbH")).toBeInDocument();
   });
 
   it("rejects malformed filter values without throwing", () => {
