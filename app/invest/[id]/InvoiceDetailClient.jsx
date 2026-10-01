@@ -82,6 +82,46 @@ const ie = copy.invest.detail.inlineEdit;
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
+// State invariants
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The inline-edit state machine in this module owns the following invariants.
+// They must hold for every render, every event handler, and every async
+// boundary (including StrictMode double-invocation and concurrent renders):
+//
+//   I1. Draft isolation: while `isEditing === false`, `draft` is never
+//       observable in the UI. The view-mode `<dd>` renders `displayValue`
+//       only. This prevents a stale draft from leaking into the read-only
+//       view after a cancel or a parent-driven prop change.
+//
+//   I2. Commit atomicity: a successful save transitions `isEditing` from
+//       true → false and invokes `onSave(field, trimmedDraft)` exactly once.
+//       A rejected save (invalid draft) leaves `isEditing === true` and
+//       `draft` unchanged, and never invokes `onSave`.
+//
+//   I3. Idempotent cancel: `handleCancel` is safe to call from any state.
+//       It resets `draft` to the current `rawValue` and forces
+//       `isEditing === false`. Repeated cancels are no-ops.
+//
+//   I4. Validator purity: the effective validator is a pure function of
+//       `(field, draft)` and never mutates component state. Validation
+//       errors are derived, never stored.
+//
+//   I5. Announcement liveness: at most one announcement is pending at a
+//       time. A new announcement replaces the previous one and resets the
+//       auto-clear timer, so screen readers never observe interleaved
+//       messages.
+//
+//   I6. Prop-change safety: when `rawValue` changes while not editing, the
+//       next `handleEdit` seeds `draft` from the new `rawValue`. When
+//       `rawValue` changes while editing, the in-flight draft is preserved
+//       (the user's input is authoritative until they cancel or save).
+//
+//   I7. Unmount safety: the announcement auto-clear timer is cleared on
+//       unmount and on every announcement change, so no `setState` fires
+//       after unmount.
+//
+// ─────────────────────────────────────────────────────────────────────────────
 // EditableRow
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -243,7 +283,6 @@ function EditableRow({
               <p
                 id={errorElId}
                 role="alert"
-                aria-live="polite"
                 data-testid={`inline-edit-error-${field}`}
                 className="text-red-400 text-xs"
               >
