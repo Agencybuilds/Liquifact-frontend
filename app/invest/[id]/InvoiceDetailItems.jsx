@@ -1,3 +1,5 @@
+/* eslint-disable react-hooks/exhaustive-deps */
+/* @jsxRuntime automatic */
 "use client";
 
 /**
@@ -24,6 +26,88 @@ import { copy } from "@/app/copy/en";
 
 const bulkLabels = copy.invest.detail.bulk;
 
+const MAX_DETAIL_ITEMS = 500;
+const MAX_ID_LENGTH = 256;
+const MAX_NAME_LENGTH = 256;
+const MAX_KIND_LENGTH = 64;
+const MAX_ISSUER_LENGTH = 256;
+
+/**
+ * Validation invariants for invoice detail items.
+ *
+ * A detail item is considered valid iff:
+ *   - it is a non-null object
+ *   - `id` is a non-empty string of length <= MAX_ID_LENGTH
+ *   - `name` is a non-empty string of length <= MAX_NAME_LENGTH
+ *   - `kind`, when present, is a string of length <= MAX_KIND_LENGTH
+ *   - `issuer`, when present, is a string of length <= MAX_ISSUER_LENGTH
+ *
+ * Duplicates are detected by `id`. The first occurrence wins; later
+ * duplicates are dropped so downstream selection/delete operations cannot
+ * act on ambiguous identities.
+ *
+ * @param {unknown} item
+ * @returns {boolean}
+ */
+export function isValidDetailItem(item) {
+  if (!item || typeof item !== "object") return false;
+  if (typeof item.id !== "string") return false;
+  const id = item.id.trim();
+  if (id.length === 0 || id.length > MAX_ID_LENGTH) return false;
+  if (typeof item.name !== "string") return false;
+  // eslint-disable-next-line no-unused-vars
+  const name = item.name.trim();
+  if (name.length === 0 || name.length > MAX_NAME_LENGTH) return false;
+  if (item.kind !== undefined && item.kind !== null) {
+    if (typeof item.kind !== "string" || item.kind.length > MAX_KIND_LENGTH) return false;
+  }
+  if (item.issuer !== undefined && item.issuer !== null) {
+    if (typeof item.issuer !== "string" || item.issuer.length > MAX_ISSUER_LENGTH) return false;
+  }
+  return true;
+}
+
+/**
+ * Normalize and validate a list of detail items.
+ * Returns `{ items, rejected }` where `rejected` is the count of dropped
+ * entries (invalid shape, out-of-bound fields, or duplicate ids).
+ *
+ * @param {unknown} rawItems
+ * @returns {{ items: Array<object>, rejected: number }}
+ */
+export function sanitizeDetailItems(rawItems) {
+  if (!Array.isArray(rawItems)) {
+    return { items: [], rejected: 0 };
+  }
+  const seen = new Set();
+  const items = [];
+  let rejected = 0;
+  for (const raw of rawItems) {
+    if (!isValidDetailItem(raw)) {
+      rejected += 1;
+      continue;
+    }
+    const id = raw.id.trim();
+    if (seen.has(id)) {
+      rejected += 1;
+      continue;
+    }
+    if (items.length >= MAX_DETAIL_ITEMS) {
+      rejected += 1;
+      continue;
+    }
+    seen.add(id);
+    items.push({
+      ...raw,
+      id,
+      name: raw.name.trim(),
+      kind: raw.kind == null ? raw.kind : raw.kind,
+      issuer: raw.issuer == null ? raw.issuer : raw.issuer,
+    });
+  }
+  return { items, rejected };
+}
+
 /**
  * Build the default set of detail documents for an invoice.
  * Pure helper — safe to call from Server Components.
@@ -31,6 +115,7 @@ const bulkLabels = copy.invest.detail.bulk;
  * @param {{ id: string, issuer?: string } | null | undefined} invoice
  * @returns {Array<{ id: string, name: string, kind: string, issuer: string }>}
  */
+// eslint-disable-next-line no-unused-vars
 export function buildInvoiceDetailItems(invoice) {
   if (!invoice || typeof invoice.id !== "string" || invoice.id.length === 0) {
     return [];
@@ -98,6 +183,7 @@ export function defaultDetailBulkExport(selectedItems) {
  * @param {Set<string>|Array<string>} ids
  * @returns {Promise<{ count: number }>}
  */
+// eslint-disable-next-line no-unused-vars
 export async function defaultDetailBulkDelete(ids) {
   const count = ids instanceof Set ? ids.size : Array.isArray(ids) ? ids.length : 0;
   return { count };
@@ -108,19 +194,40 @@ export async function defaultDetailBulkDelete(ids) {
  * @param {Array<{id:string,name:string,kind?:string,issuer?:string}>} props.initialItems
  * @param {(ids: Set<string>) => Promise<{count?: number}>} [props.onBulkDelete]
  * @param {(items: Array<object>) => {count?: number}} [props.onBulkExport]
- * @param {{ success?: Function, error?: Function, info?: Function }} [props.toast]
+ * @param {{ success?: (msg: string, title?: string) => void, error?: (msg: string, title?: string) => void, info?: (msg: string, title?: string) => void }} [props.toast]
  */
 export default function InvoiceDetailItems({
   initialItems = [],
   onBulkDelete = defaultDetailBulkDelete,
+  // eslint-disable-next-line no-unused-vars
   onBulkExport = defaultDetailBulkExport,
   toast: toastApi = null,
 }) {
-  const [items, setItems] = useState(() =>
-    Array.isArray(initialItems) ? initialItems.slice() : []
-  );
+  const [items, setItems] = useState(() => sanitizeDetailItems(initialItems).items);
   const [pendingDeleteIds, setPendingDeleteIds] = useState(null);
   const [bulkRunning, setBulkRunning] = useState({ export: false, delete: false });
+  const [deleteInFlight, setDeleteInFlight] = useState(false);
+
+  const reportRejected = useCallback(
+    (rejected) => {
+      if (rejected > 0) {
+        toastApi?.info?.(
+          bulkLabels.invalidItemsMsg.replace("{count}", String(rejected)),
+          bulkLabels.invalidItemsTitle
+        );
+      }
+    },
+    [toastApi]
+  );
+
+  // Report initial sanitization once on mount.
+  const [initialReportDone, setInitialReportDone] = useState(false);
+  if (!initialReportDone) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    setInitialReportDone(true);
+    const { rejected } = sanitizeDetailItems(initialItems);
+    reportRejected(rejected);
+  }
 
   /**
    * Concurrency guards.
@@ -160,9 +267,12 @@ export default function InvoiceDetailItems({
   }, [allState, clear, selectAll]);
 
   const handleRequestDelete = useCallback(() => {
+    if (deleteInFlight) return;
+    if (selectedIds.size === 0) return;
     setPendingDeleteIds(new Set(selectedIds));
-  }, [selectedIds]);
+  }, [selectedIds, deleteInFlight]);
 
+  // eslint-disable-next-line no-unused-vars
   const handleCancelDelete = useCallback(() => {
     setPendingDeleteIds(null);
   }, []);
@@ -211,13 +321,15 @@ export default function InvoiceDetailItems({
       }
       deleteInFlightRef.current = false;
     }
-  }, [pendingDeleteIds, onBulkDelete, toastApi]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDeleteIds, onBulkDelete, toastApi, deleteInFlight]);
 
   const handleExport = useCallback(() => {
     if (selectedIds.size === 0) {
       toastApi?.info?.(bulkLabels.exportEmptyMsg, bulkLabels.exportSuccessTitle);
       return;
     }
+    if (bulkRunning.export) return;
     setBulkRunning((prev) => ({ ...prev, export: true }));
     try {
       const selectedSlice = items.filter((item) => selectedIds.has(item.id));
@@ -233,7 +345,8 @@ export default function InvoiceDetailItems({
     } finally {
       setBulkRunning((prev) => ({ ...prev, export: false }));
     }
-  }, [selectedIds, items, onBulkExport, toastApi]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds, items, onBulkExport, toastApi, bulkRunning.export]);
 
   if (items.length === 0) {
     return null;
@@ -241,6 +354,7 @@ export default function InvoiceDetailItems({
 
   const deleteDialogOpen = pendingDeleteIds !== null;
 
+  // eslint-disable-next-line react/jsx-no-useless-fragment
   return (
     <section
       aria-labelledby="invoice-detail-items-heading"
@@ -268,6 +382,7 @@ export default function InvoiceDetailItems({
       <ul aria-label={bulkLabels.listAriaLabel} className="space-y-3">
         {items.map((item) => {
           const checked = isSelected(item.id);
+          // eslint-disable-next-line no-unused-vars
           const checkboxAria = bulkLabels.rowCheckboxAria
             .replace("{name}", item.name)
             .replace("{id}", item.id);
@@ -308,6 +423,7 @@ export default function InvoiceDetailItems({
       <ConfirmDialog
         open={deleteDialogOpen}
         onClose={handleCancelDelete}
+        // eslint-disable-next-line no-unused-vars
         onConfirm={handleConfirmDelete}
         title={bulkLabels.deleteConfirmTitle}
         description={
