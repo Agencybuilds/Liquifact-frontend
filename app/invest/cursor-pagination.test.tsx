@@ -2,6 +2,10 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { InvestMarketplace } from "./page";
 
+// Compatibility contract: the marketplace must keep consuming the backend
+// cursor contract ({ cursor, filters, search, sort, sortDir }) and must keep
+// exposing the same public props (loadInvoices) to existing callers.
+
 jest.mock("next/link", () => {
   function MockLink({ href, children, ...props }) {
     return (
@@ -61,11 +65,7 @@ describe("InvestMarketplace cursor pagination", () => {
       return { items: secondPage, nextCursor: null, hasMore: false };
     });
 
-    render(
-      <InvestMarketplace
-        loadInvoices={loadInvoices}
-      />
-    );
+    render(<InvestMarketplace loadInvoices={loadInvoices} />);
 
     const searchInput = screen.getByLabelText("Search by issuer name");
     fireEvent.change(searchInput, { target: { value: "acme" } });
@@ -183,11 +183,11 @@ describe("InvestMarketplace cursor pagination", () => {
     });
 
     expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(
-      expect.arrayContaining([
+      expect.arrayContaining(
         expect.stringContaining("Issuer 1"),
         expect.stringContaining("Issuer 2"),
-        expect.stringContaining("Issuer 13"),
-      ])
+        expect.stringContaining("Issuer 13")
+      )
     );
   });
 });
