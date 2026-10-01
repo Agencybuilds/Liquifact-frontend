@@ -4,11 +4,21 @@ import { useRef, useState } from "react";
 import { env } from "../lib/config/env";
 import { copy } from "../app/copy/en";
 import { validatePdfFile, sanitizeFilename } from "../lib/validation/pdf";
+import { announce } from "../lib/a11y/liveRegion";
+// `ProgressBar` is reserved for a future determinate-progress UI driven by
+// the parent; the current `status === "uploading"` block renders its own
+// accessibility-friendly progressbar so we don't import it here yet.
 
 // Base URL for backend API; validated and centralized in lib/config/env.
-const API_URL = env.apiUrl;
+const API_URL = env?.apiUrl || "";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+// Density toggle – kept in local state only until a settings-storage module
+// is introduced. "comfortable" is the default; "compact" is opt-in via the
+// (future) density toggle component. Defining it as a module-local constant
+// avoids an undefined-symbol ReferenceError on first render.
+const DEFAULT_DENSITY = "comfortable";
 
 const FILE_CONSTRAINTS = {
   accept: ".pdf",
@@ -35,7 +45,7 @@ function FileConstraintNotice() {
     <div
       role="note"
       aria-label="File upload requirements"
-      className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 mb-6"
+      className="upload-subtle-panel rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 mb-6"
     >
       <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">
         {copy.uploadZone.requirementsTitle}
@@ -48,7 +58,7 @@ function FileConstraintNotice() {
         />
         <ConstraintBadge icon="\u{1F512}" label={copy.uploadZone.badgeOneFile} />
       </div>
-      <p className="text-xs text-slate-400 leading-relaxed">
+      <p className="upload-muted-text text-xs text-slate-400 leading-relaxed">
         {copy.uploadZone.requirementsBody
           .replace(/\{maxSizeMb\}/g, maxSizeMb)
           .split(/(PDF documents|{maxSizeMb} MB)/)
@@ -69,7 +79,7 @@ function FileConstraintNotice() {
 function Spinner({ className = "" }) {
   return (
     <svg
-      className={`animate-spin -ml-1 mr-2 h-4 w-4 inline ${className}`}
+      className={`animate-spin motion-reduce:animate-none -ml-1 mr-2 h-4 w-4 inline ${className}`}
       xmlns="http://www.w3.org/2000/svg"
       fill="none"
       viewBox="0 0 24 24"
@@ -86,22 +96,38 @@ function Spinner({ className = "" }) {
   );
 }
 
-/**
- * UploadZone Component
- * Renders a drag-and-drop file upload area for invoice PDFs.
- * Handles file validation (MIME-type, size, and magic bytes) and manages
- * upload states (idle, uploading, tokenizing, success, error).
- *
- * @param {Object} props - Component properties
- * @param {Function} [props.onUploadSuccess] - Callback triggered when the invoice upload completes successfully. Passes the generated invoice metadata object.
- * @param {number} [props.progress] - Optional upload progress percentage (0 to 100). If provided as a number during the upload status, a determinate progress bar is rendered. If undefined, it falls back to an indeterminate spinner.
- */
 function UploadZone({ onUploadSuccess, progress }) {
   const inputRef = useRef(null);
+  const dropzoneRef = useRef(null);
+  // Refs close same-turn races before React commits state; run IDs reject stale async results.
+  const validationRunRef = useRef(0);
+  const validationPromiseRef = useRef(null);
+  const submissionRunRef = useRef(0);
+  const activeSubmissionRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
   const [file, setFile] = useState(null);
   const [error, setError] = useState(null);
   const [status, setStatus] = useState("idle");
+  const [density, setDensity] = useState(DEFAULT_DENSITY);
+
+  function handleDensityToggle() {
+    // Local-only toggle until a settings module owns persistence.
+    setDensity((prev) => (prev === "compact" ? "comfortable" : "compact"));
+  }
+
+  function resetUpload() {
+    validationRunRef.current += 1;
+    validationPromiseRef.current = null;
+    submissionRunRef.current += 1;
+    activeSubmissionRef.current = null;
+    setFile(null);
+    setError(null);
+    setStatus("idle");
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
+    dropzoneRef.current?.focus();
+  }
 
   function validate(f) {
     if (!f) return copy.uploadZone.errorNoFile;
@@ -121,24 +147,33 @@ function UploadZone({ onUploadSuccess, progress }) {
   }
 
   async function handleFile(f) {
+    if (activeSubmissionRef.current !== null) {
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
+
+    const validationRun = ++validationRunRef.current;
     setStatus("idle");
     const err = validate(f);
     if (err) {
+      validationPromiseRef.current = null;
       setError(err);
       setFile(null);
       return;
     }
-    // Optimistically set the file and clear any previous error.
     setFile(f);
     setError(null);
-    // Comprehensive PDF validation (async). If it fails, clear the file and show error.
+    const validationPromise = Promise.resolve().then(() => validatePdfFile(f));
+    validationPromiseRef.current = { run: validationRun, promise: validationPromise };
     try {
-      const validation = await validatePdfFile(f);
+      const validation = await validationPromise;
+      if (validationRun !== validationRunRef.current) return;
       if (!validation.valid) {
         setError(validation.reason || copy.uploadZone.errorInvalidPdf);
         setFile(null);
       }
     } catch (e) {
+      if (validationRun !== validationRunRef.current) return;
       setError(copy.uploadZone.errorReadFailed);
       setFile(null);
     }
@@ -158,33 +193,64 @@ function UploadZone({ onUploadSuccess, progress }) {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!file || status !== "idle") return;
+    if (
+      !file ||
+      status !== "idle" ||
+      activeSubmissionRef.current !== null
+    ) {
+      return;
+    }
+
+    const submittedFile = file;
+    const validationRun = validationRunRef.current;
+    const validation = validationPromiseRef.current?.run === validationRun
+      ? validationPromiseRef.current.promise
+      : null;
+    const submissionRun = ++submissionRunRef.current;
+    activeSubmissionRef.current = submissionRun;
 
     setStatus("uploading");
     setError(null);
 
     try {
+      if (validation) {
+        let validationResult;
+        try {
+          validationResult = await validation;
+        } catch (err) {
+          validationResult = { valid: false };
+        }
+        if (submissionRun !== submissionRunRef.current) return;
+        if (!validationResult?.valid) {
+          setStatus("idle");
+          return;
+        }
+      }
+
       const body = new FormData();
-      body.append("invoice", file);
+      body.append("invoice", submittedFile);
 
       const baseUrl = typeof API_URL !== "undefined" && API_URL ? API_URL : "";
       const res = await fetch(`${baseUrl}/invoices`, { method: "POST", body });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.message || copy.uploadZone.errorUploadStatus.replace("{status}", res.status));
+        throw new Error(
+          data.message || copy.uploadZone.errorUploadStatus.replace("{status}", res.status)
+        );
       }
 
-      setStatus("tokenizing");
+      if (submissionRun === submissionRunRef.current) setStatus("tokenizing");
       const { tokenizationDelay = 0 } = await res.json().catch(() => ({}));
       if (tokenizationDelay > 0) {
         await new Promise((r) => setTimeout(r, tokenizationDelay));
       }
-      setStatus("success");
+      if (submissionRun === submissionRunRef.current) setStatus("success");
+      announce(copy.uploadZone.statusSuccess);
       if (typeof onUploadSuccess === "function") {
         onUploadSuccess({
-          id: `upload-${Date.now()}-${sanitizeFilename(file.name)}`,
-          issuer: sanitizeFilename(file.name),
+          id: `upload-${Date.now()}-${sanitizeFilename(submittedFile.name)}`,
+          issuer: sanitizeFilename(submittedFile.name),
           amount: "Pending",
           currency: "USD",
           dueDate: "Pending",
@@ -193,19 +259,29 @@ function UploadZone({ onUploadSuccess, progress }) {
         });
       }
     } catch (err) {
-      setError(err.message || copy.uploadZone.errorUploadFailed);
-      setStatus("idle");
+      if (submissionRun === submissionRunRef.current) {
+        const errorMsg = err.message || copy.uploadZone.errorUploadFailed;
+        setError(errorMsg);
+        announce(errorMsg);
+        setStatus("idle");
+      }
+    } finally {
+      if (activeSubmissionRef.current === submissionRun) {
+        activeSubmissionRef.current = null;
+      }
     }
   }
 
   function handleKeyDown(e) {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      inputRef.current?.click();
+      if (activeSubmissionRef.current === null) inputRef.current?.click();
     }
   }
 
   const isProcessing = status === "uploading" || status === "tokenizing";
+  const isCompact = density === "compact";
+  const densityGap = isCompact ? "gap-2" : "gap-4";
 
   const dropZoneBorder = dragOver
     ? "border-cyan-400 bg-cyan-500/10"
@@ -229,21 +305,26 @@ function UploadZone({ onUploadSuccess, progress }) {
         accept={FILE_CONSTRAINTS.accept}
         className="sr-only"
         aria-label={copy.uploadZone.fileInputLabel}
+        disabled={activeSubmissionRef.current !== null}
         onChange={handleChange}
       />
       <div
+        ref={dropzoneRef}
         role="button"
-        tabIndex={0}
+        tabIndex={activeSubmissionRef.current === null ? 0 : -1}
         aria-label={copy.uploadZone.dropZoneLabel}
+        aria-disabled={activeSubmissionRef.current !== null}
         onDragOver={(e) => {
           e.preventDefault();
           setDragOver(true);
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={handleDrop}
-        onClick={() => inputRef.current?.click()}
+        onClick={() => {
+          if (activeSubmissionRef.current === null) inputRef.current?.click();
+        }}
         onKeyDown={handleKeyDown}
-        className={`cursor-pointer rounded-xl border-2 border-dashed transition-colors duration-200 p-10 text-center ${dropZoneBorder}`}
+        className={`upload-dropzone focus-ring cursor-pointer rounded-xl border-2 border-dashed transition-colors duration-200 motion-reduce:transition-none p-10 text-center ${dropZoneBorder}`}
       >
         {file ? (
           <div className="space-y-2">
@@ -254,10 +335,10 @@ function UploadZone({ onUploadSuccess, progress }) {
               className="font-medium text-emerald-400"
               dangerouslySetInnerHTML={{ __html: sanitizeFilename(file.name) }}
             />
-            <p className="text-xs text-slate-500">
+            <p className="upload-muted-text text-xs text-slate-500">
               {(file.size / 1024 / 1024).toFixed(2)} MB {"\u00B7"} PDF
             </p>
-            <p className="text-xs text-slate-500">{copy.uploadZone.changeFile}</p>
+            <p className="upload-muted-text text-xs text-slate-500">{copy.uploadZone.changeFile}</p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -265,7 +346,9 @@ function UploadZone({ onUploadSuccess, progress }) {
               {"\u{1F4C2}"}
             </span>
             <p className="font-medium text-slate-300">{copy.uploadZone.dragDropPrompt}</p>
-            <p className="text-sm text-slate-500">{copy.uploadZone.browsePrompt}</p>
+            <p className="upload-muted-text text-sm text-slate-500">
+              {copy.uploadZone.browsePrompt}
+            </p>
             <div className="flex justify-center gap-2 flex-wrap pt-1">
               <span className="rounded-full bg-slate-800 px-2.5 py-0.5 text-xs text-slate-400">
                 {copy.uploadZone.badgePdfOnly}
@@ -278,93 +361,114 @@ function UploadZone({ onUploadSuccess, progress }) {
         )}
       </div>
 
-      {error && (
-        <p
-          role="alert"
-          aria-live="assertive"
-          className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400"
-        >
-          <span aria-hidden="true">{"⚠️"}</span>
-          {error}
-        </p>
-      )}
+      <div data-testid="upload-zone" className={`flex flex-col ${densityGap}`}>
+        {error && (
+          <p
+            role="alert"
+            aria-live="assertive"
+            className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400"
+          >
+            <span aria-hidden="true">{"\u26A0\uFE0F"}</span>
+            {error}
+          </p>
+        )}
 
-      {status === "uploading" && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="mt-3 flex flex-col gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-400"
-        >
-          <div className="flex items-center gap-2">
-            {typeof progress !== "number" && <Spinner />}
-            <span id="upload-status-text">{copy.uploadZone.statusUploading}</span>
+        {status === "uploading" && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="flex flex-col gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-400"
+          >
+            <div className="flex items-center gap-2">
+              {typeof progress !== "number" && <Spinner />}
+              <span id="upload-status-text">{copy.uploadZone.statusUploading}</span>
+              {typeof progress === "number" && (
+                <span className="ml-auto font-medium">{Math.round(progress)}%</span>
+              )}
+            </div>
             {typeof progress === "number" && (
-              <span className="ml-auto font-medium">{Math.round(progress)}%</span>
+              <div
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow={Math.round(progress)}
+                aria-labelledby="upload-status-text"
+                className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-cyan-950/50"
+              >
+                <div
+                  className="h-full bg-cyan-400 transition-all duration-300 motion-reduce:transition-none"
+                  style={{ width: `${Math.round(progress)}%` }}
+                />
+                <span className="sr-only">{Math.round(progress)}% uploaded</span>
+              </div>
             )}
           </div>
-          {typeof progress === "number" && (
-            <div
-              role="progressbar"
-              aria-valuemin="0"
-              aria-valuemax="100"
-              aria-valuenow={Math.round(progress)}
-              aria-labelledby="upload-status-text"
-              className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-cyan-950/50"
-            >
-              <div
-                className="h-full bg-cyan-400 transition-all duration-300 motion-reduce:transition-none"
-                style={{ width: `${Math.round(progress)}%` }}
-              />
-            </div>
-          )}
-        </div>
-      )}
-
-      {status === "tokenizing" && (
-        <p
-          role="status"
-          aria-live="polite"
-          className="mt-3 flex items-start gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-400"
-        >
-          <Spinner />
-          {copy.uploadZone.statusTokenizing}
-        </p>
-      )}
-
-      {status === "success" && (
-        <p
-          role="status"
-          aria-live="polite"
-          className="mt-3 flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400"
-        >
-          <span aria-hidden="true">{"\u{1F680}"}</span>
-          {copy.uploadZone.statusSuccess}
-        </p>
-      )}
-
-      <button
-        id="invoice-upload-btn"
-        type="submit"
-        disabled={!file || isProcessing}
-        aria-disabled={!file || isProcessing}
-        className="mt-4 w-full rounded-xl bg-cyan-500 py-3 text-sm font-semibold text-slate-950 transition-all duration-200
-          hover:bg-cyan-400 focus-ring
-          disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        {status === "uploading" && (
-          <>
-            <Spinner />
-            {copy.uploadZone.submitUploading}
-          </>
         )}
+
         {status === "tokenizing" && (
-          <>
-            <Spinner />
-            {copy.uploadZone.submitTokenizing}
-          </>
+          <div className="flex flex-col gap-3">
+            <p
+              role="status"
+              aria-live="polite"
+              className="flex items-start gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-400"
+            >
+              <Spinner />
+              {copy.uploadZone.statusTokenizing}
+            </p>
+            <button
+              type="button"
+              onClick={resetUpload}
+              className="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white transition-all duration-200 motion-reduce:transition-none hover:bg-emerald-500 focus-ring"
+              aria-label={copy.uploadZone.resetAriaLabel}
+            >
+              {copy.uploadZone.resetAction}
+            </button>
+          </div>
         )}
-        {(status === "idle" || status === "success") && copy.uploadZone.submitIdle}
-      </button>
+
+        {status === "success" && (
+          <div className="flex flex-col gap-3">
+            <p
+              role="status"
+              aria-live="polite"
+              className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400"
+            >
+              <span aria-hidden="true">✅</span>
+              {copy.uploadZone.statusSuccess}
+            </p>
+            <button
+              type="button"
+              onClick={resetUpload}
+              className="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white transition-all duration-200 motion-reduce:transition-none hover:bg-emerald-500 focus-ring"
+              aria-label={copy.uploadZone.resetAriaLabel}
+            >
+              {copy.uploadZone.resetAction}
+            </button>
+          </div>
+        )}
+
+        <button
+          id="invoice-upload-btn"
+          type="submit"
+          disabled={!file || isProcessing || status === "success"}
+          aria-disabled={!file || isProcessing || status === "success"}
+          className="w-full rounded-xl bg-cyan-500 py-3 text-sm font-semibold text-slate-950 transition-all duration-200 motion-reduce:transition-none hover:bg-cyan-400 focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {status === "uploading" && (
+            <>
+              <Spinner />
+              {copy.uploadZone.submitUploading}
+            </>
+          )}
+          {status === "tokenizing" && (
+            <>
+              <Spinner />
+              {copy.uploadZone.submitTokenizing}
+            </>
+          )}
+          {(status === "idle" || status === "success") && copy.uploadZone.submitIdle}
+        </button>
+      </div>
     </form>
   );
 }

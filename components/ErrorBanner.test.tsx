@@ -44,9 +44,7 @@ import ErrorBanner from "./ErrorBanner";
 
 describe("ErrorBanner — variant label matrix", () => {
   it('shows "Server error" for variant="server"', () => {
-    render(
-      <ErrorBanner variant="server" title="Oops" description="Something went wrong." />
-    );
+    render(<ErrorBanner variant="server" title="Oops" description="Something went wrong." />);
     expect(screen.getByText("Server error")).toBeInTheDocument();
   });
 
@@ -56,9 +54,7 @@ describe("ErrorBanner — variant label matrix", () => {
   });
 
   it('shows "Validation error" for variant="validation"', () => {
-    render(
-      <ErrorBanner variant="validation" title="Bad input" description="Fix the form." />
-    );
+    render(<ErrorBanner variant="validation" title="Bad input" description="Fix the form." />);
     expect(screen.getByText("Validation error")).toBeInTheDocument();
   });
 
@@ -140,11 +136,7 @@ describe("ErrorBanner — details (conditional)", () => {
 
   it("does not render details when details prop is undefined", () => {
     render(
-      <ErrorBanner
-        title="Load failed"
-        description="Could not reach API."
-        details={undefined}
-      />
+      <ErrorBanner title="Load failed" description="Could not reach API." details={undefined} />
     );
     // The component uses `{details ? <p>...</p> : null}` so falsy details = no element
     const alert = screen.getByRole("alert");
@@ -180,22 +172,14 @@ describe("ErrorBanner — previewLabel", () => {
 
   it("renders a custom previewLabel when provided", () => {
     render(
-      <ErrorBanner
-        title="Oops"
-        description="Something went wrong."
-        previewLabel="Invoice detail"
-      />
+      <ErrorBanner title="Oops" description="Something went wrong." previewLabel="Invoice detail" />
     );
     expect(screen.getByText("Invoice detail")).toBeInTheDocument();
   });
 
   it("renders an empty previewLabel badge when explicitly set to empty string", () => {
     const { container } = render(
-      <ErrorBanner
-        title="Oops"
-        description="Something went wrong."
-        previewLabel=""
-      />
+      <ErrorBanner title="Oops" description="Something went wrong." previewLabel="" />
     );
     // The badge span still renders, just with empty text content.
     // We verify it by checking the span exists with empty text rather
@@ -257,16 +241,12 @@ describe("ErrorBanner — action button rendering", () => {
   });
 
   it("does not render a button when actionLabel is an empty string", () => {
-    render(
-      <ErrorBanner title="Oops" description="Something went wrong." actionLabel="" />
-    );
+    render(<ErrorBanner title="Oops" description="Something went wrong." actionLabel="" />);
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("does not render a button when actionLabel is whitespace-only", () => {
-    render(
-      <ErrorBanner title="Oops" description="Something went wrong." actionLabel="   " />
-    );
+    render(<ErrorBanner title="Oops" description="Something went wrong." actionLabel="   " />);
     // Whitespace-only strings are truthy, so the button renders
     // (this is the current component behaviour; documented here)
     expect(screen.getByRole("button")).toBeInTheDocument();
@@ -343,9 +323,7 @@ describe("ErrorBanner — onAction callback", () => {
       />
     );
 
-    await expect(
-      user.click(screen.getByRole("button", { name: "Retry" }))
-    ).resolves.not.toThrow();
+    await expect(user.click(screen.getByRole("button", { name: "Retry" }))).resolves.not.toThrow();
   });
 
   it("does not throw when onAction is undefined and button is keyboard-activated", async () => {
@@ -463,17 +441,13 @@ describe("ErrorBanner — axe accessibility audits", () => {
   });
 
   it("passes axe with minimal props (title + description only)", async () => {
-    const { container } = render(
-      <ErrorBanner title="Oops" description="Something went wrong." />
-    );
+    const { container } = render(<ErrorBanner title="Oops" description="Something went wrong." />);
     const results = await axe(container);
     expect(results).toHaveNoViolations();
   });
 
   it("passes axe with only description omitted", async () => {
-    const { container } = render(
-      <ErrorBanner variant="error" title="Load failed" />
-    );
+    const { container } = render(<ErrorBanner variant="error" title="Load failed" />);
     const results = await axe(container);
     expect(results).toHaveNoViolations();
   });
@@ -524,9 +498,7 @@ describe("ErrorBanner — edge cases", () => {
   it.each(["server", "validation", "error"] as const)(
     "renders the ! icon with aria-hidden for variant: %s",
     (variant) => {
-      render(
-        <ErrorBanner variant={variant} title="Oops" description="Fail." />
-      );
+      render(<ErrorBanner variant={variant} title="Oops" description="Fail." />);
       expect(screen.getByText("!")).toBeInTheDocument();
       expect(screen.getByText("!")).toHaveAttribute("aria-hidden", "true");
     }

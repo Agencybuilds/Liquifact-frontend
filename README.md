@@ -45,13 +45,38 @@ New to the codebase? Start with the
 App Router routes (and their loading/error files), the mock-vs-live data layers,
 and where wallet/toast/theme state lives.
 
+For the dashboard theme flow, token usage, current limitations, and safe
+customization steps, see the
+[Dashboard theming guide](docs/dashboard-theming.md).
+
+For the exact invoice fixture shape, formatted-versus-raw value rules, and the
+API migration seam, see the [Invoice data contract](docs/invoice-data.md).
+
+For marketplace component usage, props, and common patterns, see the
+[Marketplace usage guide](docs/marketplace.md).
+
+For invoice-detail component usage, props, and examples, see the
+[Invoice detail usage guide](docs/invoice-detail-usage.md).
+
+For a step-by-step diagram of how `/invest/[id]` fetches, transforms, and
+renders an invoice (including the RSC/client boundary split), see the
+[Invoice-detail data flow](docs/invoice-detail-flow.md).
+
+For a visual diagram of how upload loads and renders data (fetch → transform → render),
+see the [Upload data flow](docs/upload-data-flow.md).
+
+For a visual diagram of how settings loads, edits, and persists data (fetch → transform → render),
+see the [Settings data flow](docs/settings-data-flow.md).
+
 ---
 
 ## API Integration
 
 For frontend/backend contract details see:
 
-docs/api-integration.md
+[docs/api-integration.md](docs/api-integration.md)
+
+For the current Invest marketplace component props and usage reference, see [docs/marketplace-api.md](docs/marketplace-api.md).
 
 ---
 
@@ -133,6 +158,8 @@ export function getInvoiceLoadAnnouncement(invoices, { filterActive, filteredCou
 ```
 
 Both `filterActive` and `filteredCount` are computed inside `InvestMarketplace` from live state (`hasAnyActiveFilters(filters, debouncedSearch)` and `filteredInvoices.length`) and are passed in explicitly — the function itself has no implicit dependencies on component state.
+
+For a concise component-by-component API reference, see [docs/marketplace-api.md](docs/marketplace-api.md).
 
 ### Error recovery
 
@@ -257,6 +284,8 @@ Tech: **Next.js 16** (App Router), **React 19**, **Tailwind CSS 4**.
 
 ## Accessibility
 
+See the full [Accessibility Statement](docs/accessibility.md) for WCAG commitment, focus-ring audit, live regions, and contributor checklist. Marketplace-specific **roles, keyboard interactions, and focus behaviour** for `/invest` and `/invest/[id]` are documented in [Marketplace accessibility](docs/accessibility.md#marketplace-accessibility-issue-692).
+
 ### Skip-to-content link
 
 A visually-hidden "Skip to content" link is the first focusable element on every page. It becomes visible when focused (first Tab press) and jumps the keyboard user past the navigation header directly to `<main id="main-content">`.
@@ -343,7 +372,12 @@ See COMPONENTS.md for the full component library reference — props, accessibil
   | WRONG_NETWORK  | `warning`       | Amber — user must switch network       |
   | NO_WALLET      | `external`      | Violet — opens install URL             |
 
-- **UploadZone Progress Indicator**: During the upload phase, if a `progress` prop (number between `0` and `100`) is supplied to `UploadZone`, a determinate progress bar (`role="progressbar"`) is displayed. If no `progress` is supplied, it falls back to an indeterminate spinner. Smooth transitions are disabled when `prefers-reduced-motion` is active.
+- **UploadZone Progress Indicator**: During the upload phase, if a `progress` prop (number between `0` and `100`) is supplied to `UploadZone`, a determinate progress bar is displayed via the reusable `ProgressBar` component. If no `progress` is supplied, it falls back to an indeterminate spinner with "Uploading invoice..." text. Features: visible percentage, full ARIA attributes (`role="progressbar"`, `aria-valuemin`, `aria-valuemax`, `aria-valuenow`), `sr-only` text for assistive technologies, and `prefers-reduced-motion` support. Design allows future integration with XHR/fetch progress callbacks.
+- **UploadZone Reset Flow**: After a successful upload (status = `"success"`), an **"Upload another invoice"** button appears below the success message. Clicking it:
+  - Clears the file, error, and status back to their initial (idle) values.
+  - Clears the hidden file `<input>` so the same file can be re-selected.
+  - Moves focus to the dropzone, enabling keyboard users to immediately start a fresh upload without re-navigating.
+  The reset flow is tested for: button visibility in success state, state clearing (file, error, status), re-upload after reset, stale error clearing, and focus management. The success message's `role="status"` / `aria-live="polite"` region is preserved and cleared on reset.
 - **WalletStatus button variant alignment** (fix: `refactor/wallet-02-fix-button-config`): `WalletStatus` now passes `variant={config.buttonVariant}` and `loading={state === WALLET_STATES.CONNECTING}` correctly to `Button`. The previous `getStateConfig` returned `buttonVariant: "loading"` for the connecting state — but `"loading"` is not a valid `Button` variant (`primary | secondary | warning | external | danger`), which caused `variantStyles["loading"]` to be `undefined` and silently broke the button's className. The fix:
   - CONNECTING state now uses `buttonVariant: "primary"` (the loading spinner is rendered by `Button` via `loading={true}` and `aria-busy="true"`).
   - `getStateConfig` is extracted to module scope with `walletData` and `error` as explicit parameters.
@@ -645,6 +679,35 @@ The Invest page (`app/invest/page.js`) includes an issuer-name search field and 
 | **No-match state**              | A distinct empty state is shown when filters produce zero results, separate from the empty-marketplace state      |
 | **Pagination**                  | `components/Pagination.jsx` — page controls appear when filtered results exceed `PAGE_SIZE` (default 10)          |
 
+#### Pagination
+
+The Invest marketplace (`app/invest/page.js`) renders at most `PAGE_SIZE` (10) invoices at a time. When the filtered result set exceeds `PAGE_SIZE`, a **"Load more"** button is displayed below the list.
+
+| Behaviour | Detail |
+| --------- | ------ |
+| **Initial page** | First `PAGE_SIZE` items are rendered; remaining items are hidden. |
+| **Load more** | Clicking "Load more" appends the next `PAGE_SIZE` batch. The button disappears when all items are visible. |
+| **Paging reset on data change** | `visibleCount` resets to `PAGE_SIZE` when the raw invoice data changes (new fetch, retry). |
+| **Paging reset on filter/search** | `visibleCount` resets to `PAGE_SIZE` when filters or the debounced search term change, so the user always starts at the top of a newly filtered list. |
+| **Focus management** | After each "Load more" click, focus is returned to the button via `setTimeout(0)` so keyboard users do not lose their place. |
+| **Screen-reader announcement** | The polite `aria-live` status region announces _"Showing N of M investable invoices"_ when paging is active (N < M) and the full count when all items are visible. |
+| **Edge cases** | Fewer items than `PAGE_SIZE` → no Load more button, all items shown. Exact `PAGE_SIZE` boundary → no Load more button. Last page remainder → only remaining items appended. |
+| **Empty / error states** | When invoices are loading, errored, empty, or all filtered out, the Load more button is not rendered. |
+
+**Exports from `app/invest/page.js`:**
+
+| Export | Type | Description |
+| ------ | ---- | ----------- |
+| `PAGE_SIZE` | `number` (10) | Maximum items shown per page / load-more batch |
+| `SEARCH_DEBOUNCE_MS` | `number` (300) | Debounce delay for issuer search input |
+| `getPaginationAnnouncement(shown, total)` | `function` | Returns the _"Showing N of M investable invoices"_ screen-reader announcement string |
+| `getInvoiceLoadAnnouncement(invoices, opts)` | `function` | Returns the initial-load or filtered-count announcement string |
+
+**Test coverage:**
+
+- `app/invest/page.test.jsx` covers initial page size, load-more appends, exact boundary, last page remainder, filter-reset, search-reset, and empty/error/no-match states.
+- `components/Pagination.jsx` has dedicated tests for page-change announcements (`Pagination.announce.test.tsx`) and parameter clamping (`Pagination.clamp.test.tsx`).
+
 ---
 
 ## Project structure
@@ -676,6 +739,7 @@ liquifact-frontend/
 │   ├── Pagination.jsx      # Page controls for large result sets
 │   ├── ToastProvider.jsx   # Toast notification system
 │   ├── UploadZone.jsx      # Invoice PDF upload + validation
+│   ├── ProgressBar.jsx     # Reusable accessible progress bar
 │   ├── WalletProvider.jsx  # App-wide wallet state provider
 │   ├── WalletStatus.jsx    # Wallet connection / address display
 │   └── WalletStatusLazy.jsx # next/dynamic wrapper (ssr: false)
@@ -693,6 +757,8 @@ Tech: **Next.js 16** (App Router), **React 19**, **Tailwind CSS 4**.
 ---
 
 ## Accessibility
+
+See the full [Accessibility Statement](docs/accessibility.md) for WCAG commitment, focus-ring audit, live regions, and contributor checklist. Marketplace-specific **roles, keyboard interactions, and focus behaviour** for `/invest` and `/invest/[id]` are documented in [Marketplace accessibility](docs/accessibility.md#marketplace-accessibility-issue-692).
 
 ### Skip-to-content link
 
@@ -753,25 +819,6 @@ As the application handles financial flows and wallet integration, our CI pipeli
 
 ---
 
-## Dependency updates
-
-Dependabot opens weekly PRs on Monday to keep npm packages and GitHub Actions current.
-
-PRs are grouped to limit noise:
-
-- **nextjs-react** — `next`, `react`, `react-dom`, and their `@types` packages together (coordinated bumps).
-- **dev-tooling** — all remaining `devDependencies` in one PR.
-- **github-actions** — action version bumps in a separate PR.
-
-**Reviewing a Dependabot PR**
-
-1. Check the CI run passes (lockfile check + lint + build).
-2. Scan the changelog/release notes linked in the PR description for breaking changes.
-3. For `nextjs-react` bumps, do a quick smoke test (`npm run dev`) locally.
-4. Approve and merge — **do not enable auto-merge**; every dependency bump requires a human reviewer.
-
----
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contributor workflow, branch naming convention, local checks, and accessibility expectations. Also see our [Accessibility Statement](docs/accessibility.md).
@@ -792,7 +839,12 @@ We welcome UI improvements, new pages (e.g. invoice upload, marketplace), and St
 
 See [COMPONENTS.md](COMPONENTS.md) for the full component library reference — props, accessibility notes, and usage examples for every shared component (`ErrorBanner`, `Footer`, `InvoiceListSkeleton`, `ToastProvider`, `UploadZone`, `WalletProvider`, `WalletStatus`).
 
-- **UploadZone Progress Indicator**: During the upload phase, if a `progress` prop (number between `0` and `100`) is supplied to `UploadZone`, a determinate progress bar (`role="progressbar"`) is displayed. If no `progress` is supplied, it falls back to an indeterminate spinner. Smooth transitions are disabled when `prefers-reduced-motion` is active.
+- **UploadZone Progress Indicator**: During the upload phase, if a `progress` prop (number between `0` and `100`) is supplied to `UploadZone`, a determinate progress bar is displayed via the reusable `ProgressBar` component. If no `progress` is supplied, it falls back to an indeterminate spinner with "Uploading invoice..." text. Features: visible percentage, full ARIA attributes (`role="progressbar"`, `aria-valuemin`, `aria-valuemax`, `aria-valuenow`), `sr-only` text for assistive technologies, and `prefers-reduced-motion` support. Design allows future integration with XHR/fetch progress callbacks.
+- **UploadZone Reset Flow**: After a successful upload (status = `"success"`), an **"Upload another invoice"** button appears below the success message. Clicking it:
+  - Clears the file, error, and status back to their initial (idle) values.
+  - Clears the hidden file `<input>` so the same file can be re-selected.
+  - Moves focus to the dropzone, enabling keyboard users to immediately start a fresh upload without re-navigating.
+  The reset flow is tested for: button visibility in success state, state clearing (file, error, status), re-upload after reset, stale error clearing, and focus management. The success message's `role="status"` / `aria-live="polite"` region is preserved and cleared on reset.
 - **WalletStatus button variant alignment** (fix: `refactor/wallet-02-fix-button-config`): `WalletStatus` now passes `variant={config.buttonVariant}` and `loading={state === WALLET_STATES.CONNECTING}` correctly to `Button`. The previous `getStateConfig` returned `buttonVariant: "loading"` for the connecting state — but `"loading"` is not a valid `Button` variant (`primary | secondary | warning | external | danger`), which caused `variantStyles["loading"]` to be `undefined` and silently broke the button's className. The fix:
   - CONNECTING state now uses `buttonVariant: "primary"` (the loading spinner is rendered by `Button` via `loading={true}` and `aria-busy="true"`).
   - `getStateConfig` is extracted to module scope with `walletData` and `error` as explicit parameters.

@@ -7,6 +7,7 @@ import { copy } from "./copy/en";
 import { getHealth } from "../lib/api/health";
 import { env } from "../lib/config/env";
 import { extractKnownFields, safeJsonStringify } from "../lib/format/safeJson";
+import HealthStatusSkeleton from "../components/HealthStatusSkeleton";
 
 const API_URL = env.apiUrl;
 
@@ -44,7 +45,9 @@ const getStatusConfig = (status) => {
 export default function Home() {
   const [health, setHealth] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const abortRef = useRef(null);
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -56,16 +59,24 @@ export default function Home() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    const requestId = ++requestIdRef.current;
 
+    setError(null);
     setLoading(true);
     try {
       const result = await getHealth(API_URL, { signal: controller.signal });
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || requestId !== requestIdRef.current) return;
       setHealth(result);
     } catch (err) {
       if (err?.name === "AbortError") return;
+      if (requestId !== requestIdRef.current) return;
+      // Preserve the compatibility contract: a failed health check must
+      // surface a deterministic, non-sensitive error state instead of
+      // silently leaving stale data or an empty UI.
+      setHealth(null);
+      setError(copy.home.healthStatus.unreachable);
     } finally {
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && requestId === requestIdRef.current) {
         setLoading(false);
       }
     }
@@ -112,6 +123,21 @@ export default function Home() {
           >
             {loading ? copy.home.checking : copy.home.checkApiHealth}
           </button>
+
+          {loading && <HealthStatusSkeleton />}
+
+          {!loading && error && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="mt-4 rounded-lg border border-red-500/20 bg-red-500/10 p-4"
+            >
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border bg-red-500/10 text-red-400 border-red-500/20">
+                <span aria-hidden="true">✕</span>
+                <span>{error}</span>
+              </span>
+            </div>
+          )}
 
           {!loading && health && (
             <div className="mt-4">

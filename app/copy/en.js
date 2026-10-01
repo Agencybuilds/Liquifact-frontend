@@ -12,7 +12,7 @@
  * @property {string} home.apiStatus
  * @property {string} home.checkApiHealth
  * @property {string} home.checking
- * @property {{ connected: string, degraded: string, unreachable: string, rawResponse: string }} home.healthStatus
+ * @property {{connected: string, degraded: string, unreachable: string, rawResponse: string}} home.healthStatus
  * @property {Object} invest - Invest page copy
  * @property {string} invest.title
  * @property {string} invest.subtext
@@ -38,6 +38,70 @@
  * @property {string} invest.announceFilteredCount
  * @property {string} invest.announceInvoicesLoaded
  * @property {string} invest.announceShowing
+ * @property {Object} invest.fundAmount - Partial funding input copy
+ * @property {string} invest.fundAmount.label
+ * @property {string} invest.fundAmount.placeholder
+ * @property {string} invest.fundAmount.helper
+ * @property {string} invest.fundAmount.expectedYieldLabel
+ * @property {string} invest.fundAmount.errorRequired
+ * @property {string} invest.fundAmount.errorPositive
+ * @property {string} invest.fundAmount.errorExceedsBalance
+ * @property {string} invest.fundAmount.errorPrecision
+ * @property {string} invest.fundAmount.submitLabel
+ * @property {string} invest.fundAmount.submittingLabel
+ * @property {Object} invest.detail - Invoice detail page copy
+ * @property {string} invest.detail.pageTitle
+ * @property {string} invest.detail.pageSub
+ * @property {string} invest.detail.backToMarketplace
+ * @property {string} invest.detail.backToMarketplaceLabel
+ * @property {string} invest.detail.backToHome
+ * @property {string} invest.detail.summaryHeading
+ * @property {string} invest.detail.labelIssuer
+ * @property {string} invest.detail.labelAmount
+ * @property {string} invest.detail.labelYield
+ * @property {string} invest.detail.labelMaturity
+ * @property {string} invest.detail.labelStatus
+ * @property {string} invest.detail.fundButton
+ * @property {string} invest.detail.fundButtonLabel
+ * @property {string} invest.detail.copyLinkButton
+ * @property {string} invest.detail.copyLinkButtonLabel
+ * @property {string} invest.detail.printButton
+ * @property {string} invest.detail.printButtonLabel
+ * @property {string} invest.detail.disclaimerNote
+ * @property {string} invest.detail.copySuccessMsg
+ * @property {string} invest.detail.copySuccessTitle
+ * @property {string} invest.detail.copyErrorMsg
+ * @property {string} invest.detail.copyErrorTitle
+ * @property {string} invest.detail.loadErrorMsg
+ * @property {string} invest.detail.loadErrorTitle
+ * @property {string} invest.detail.actionGroupLabel
+ * @property {string} invest.detail.labelReference
+ * @property {string} invest.detail.exportGroupLabel
+ * @property {string} invest.detail.exportCSVButton
+ * @property {string} invest.detail.exportCSVLabel
+ * @property {string} invest.detail.exportJSONButton
+ * @property {string} invest.detail.exportJSONLabel
+ * @property {string} invest.detail.densityToggleLabel
+ * @property {string} invest.detail.densityCompact
+ * @property {string} invest.detail.densityComfortable
+ * @property {string} invest.detail.densityCompactAriaLabel
+ * @property {string} invest.detail.densityComfortableAriaLabel
+ * @property {string} invest.detail.densityCurrentAriaLabel
+ * @property {Object} invest.detail.networkMismatch - Network mismatch banner copy
+ * @property {string} invest.detail.networkMismatch.bannerTitle
+ * @property {string} invest.detail.networkMismatch.bannerBody
+ * @property {string} invest.detail.networkMismatch.bannerBodyUnknown
+ * @property {string} invest.detail.networkMismatch.bannerBodyDisconnected
+ * @property {string} invest.detail.networkMismatch.alertLabel
+ * @property {string} invest.detail.networkMismatch.announceMessage
+ * @property {Object} invest.detail.inlineEdit - Inline edit mode copy for invoice-detail metadata rows
+ * @property {string} invest.detail.inlineEdit.editButton
+ * @property {string} invest.detail.inlineEdit.saveButton
+ * @property {string} invest.detail.inlineEdit.cancelButton
+ * @property {string} invest.detail.inlineEdit.errorRequired
+ * @property {string} invest.detail.inlineEdit.announceSaved
+ * @property {string} invest.detail.inlineEdit.announceCancelled
+ * @property {Object} invest.detail.bulk - Bulk-select toolbar copy for invoice detail documents
  * @property {Object} invoices - Invoices page copy
  * @property {string} invoices.title
  * @property {string} invoices.subtext
@@ -46,6 +110,30 @@
  * @property {string} invoices.errorDescription
  * @property {string} invoices.backToHome
  * @property {string} invoices.connectWallet
+ * @property {string} invoices.editRowAction
+ * @property {string} invoices.editRowAriaLabel
+ * @property {string} invoices.saveEditAction
+ * @property {string} invoices.saveEditAriaLabel
+ * @property {string} invoices.cancelEditAction
+ * @property {string} invoices.cancelEditAriaLabel
+ * @property {string} invoices.issuerLabel
+ * @property {string} invoices.amountLabel
+ * @property {string} invoices.currencyLabel
+ * @property {string} invoices.dueDateLabel
+ * @property {string} invoices.yieldLabel
+ * @property {string} invoices.errorIssuerRequired
+ * @property {string} invoices.errorAmountRequired
+ * @property {string} invoices.errorDueDateRequired
+ * @property {string} invoices.errorCurrencyRequired
+ * @property {string} invoices.announceEditStarted
+ * @property {string} invoices.announceEditSuccess
+ * @property {string} invoices.announceEditCancelled
+ * @property {string} invoices.copyIdButton
+ * @property {string} invoices.copyIdAriaLabel
+ * @property {string} invoices.copyIdSuccessTitle
+ * @property {string} invoices.copyIdSuccessMsg
+ * @property {string} invoices.copyIdErrorTitle
+ * @property {string} invoices.copyIdErrorMsg
  * @property {Object} layout - Layout copy
  * @property {string} layout.backToHome
  * @property {string} layout.connectWallet
@@ -84,6 +172,8 @@
  * @property {string} uploadZone.errorReadFailed
  * @property {string} uploadZone.errorUploadFailed
  * @property {string} uploadZone.errorUploadStatus
+ * @property {string} uploadZone.resetAction
+ * @property {string} uploadZone.resetAriaLabel
  * @property {Object} wallet - Wallet copy
  * @property {string} wallet.connectButton
  * @property {string} wallet.connectingButton
@@ -91,6 +181,7 @@
  * @property {string} wallet.retryButton
  * @property {string} wallet.switchNetworkButton
  * @property {string} wallet.installWalletButton
+ * @property {string} wallet.copyAddressButton
  * @property {string} wallet.helperDisconnected
  * @property {string} wallet.helperConnecting
  * @property {string} wallet.helperConnected
@@ -104,6 +195,10 @@
  * @property {string} wallet.toastErrorMsg
  * @property {string} wallet.toastWrongNetworkTitle
  * @property {string} wallet.toastWrongNetworkMsg
+ * @property {string} wallet.toastCopySuccessTitle
+ * @property {string} wallet.toastCopySuccessMsg
+ * @property {string} wallet.toastCopyErrorTitle
+ * @property {string} wallet.toastCopyErrorMsg
  * @property {string} wallet.errorConnect
  * @property {string} wallet.errorWrongNetwork
  * @property {string} wallet.announceConnected
@@ -111,11 +206,24 @@
  * @property {string} wallet.announceError
  * @property {string} wallet.announceWrongNetwork
  * @property {string} wallet.announceNoWallet
+ * @property {string} wallet.errorTitle
+ * @property {string} wallet.errorDescription
+ * @property {string} wallet.errorActionLabel
+ * @property {string} wallet.errorPreviewLabel
+ * @property {Object} nav - Site navigation copy
+ * @property {string} nav.errorTitle
+ * @property {string} nav.errorDescription
+ * @property {string} nav.errorActionLabel
+ * @property {string} nav.announceNavigation - Template: "Navigated to {label}"
  * @property {Object} error - Error page copy
  * @property {string} error.title
  * @property {string} error.description
  * @property {string} error.actionLabel
  * @property {string} error.previewLabel
+ * @property {Object} network - Network status copy
+ * @property {string} network.offlineBanner
+ * @property {string} network.reconnectedTitle
+ * @property {string} network.reconnectedMsg
  * @property {Object} notFound - Not found page copy
  * @property {string} notFound.heading
  * @property {string} notFound.description
@@ -126,154 +234,53 @@
  * @property {string} globalError.description
  * @property {string} globalError.reloadLabel
  * @property {string} globalError.homeLabel
- */
+ * @property {Object} invoiceTimeline - Invoice lifecycle timeline copy
+ * @property {string} invoiceTimeline.heading
+ * @property {string} invoiceTimeline.stageUploaded
+ * @property {string} invoiceTimeline.stageVerified
+ * @property {string} invoiceTimeline.stageListed
+ * @property {string} invoiceTimeline.stageFunded
+ * @property {string} invoiceTimeline.stageSettled
+ * @property {string} invoiceTimeline.statusCompleted
+ * @property {string} invoiceTimeline.statusCurrent
+ * @property {string} invoiceTimeline.statusPending
+ * @property {Object} setting
+*/
 
-/** @type {CopyDictionary} */
-export const copy = {
+const copy = {
   home: {
-    heroTitle: "Global Invoice Liquidity Network on Stellar",
-    heroSub:
-      "Unlock liquidity from unpaid invoices instantly. SMEs get working capital; investors earn yield. Tokenized invoices, escrow on Soroban.",
-    boxBusinessTitle: "For Businesses",
-    boxBusinessSub: "Upload invoices, get instant stablecoin liquidity.",
-    boxBusinessAriaLabel: "For Businesses \u2013 upload invoices and get instant stablecoin liquidity",
-    boxInvestTitle: "For Investors",
-    boxInvestSub: "Fund tokenized invoices and earn yield at maturity.",
-    boxInvestAriaLabel: "For Investors \u2013 fund tokenized invoices and earn yield at maturity",
-    apiStatus: "API status",
-    checkApiHealth: "Check backend health",
-    checking: "Checking\u2026",
-    // Health status states - maps to getHealth return values
+    heroTitle: 'Liquifact',
+    heroSub: 'Invoice financing for modern businesses',
+    boxBusinessTitle: 'For businesses',
+    boxBusinessSub: 'Upload and tokenize your invoices',
+    boxBusinessAriaLabel: 'Learn more about business invoice financing',
+    boxInvestTitle: 'For investors',
+    boxInvestSub: 'Fund invoices and earn yield',
+    boxInvestAriaLabel: 'Learn more about investing in invoices',
+    apiStatus: 'API status',
+    checkApiHealth: 'Check API health',
+    checking: 'Checking...',
     healthStatus: {
-      connected: "Connected",
-      degraded: "Degraded",
-      unreachable: "Unreachable",
-      rawResponse: "Raw response",
+      connected: 'Connected',
+      degraded: 'Degraded',
+      unreachable: 'Unreachable',
+      rawResponse: 'Raw response',
     },
   },
-  invest: {
-    title: "Invest",
-    subtext:
-      "Browse tokenized invoices and fund them. Estimated yield is shown for educational purposes; actual payment is received at invoice maturity.",
-    emptyState: "No investable invoices. Connect wallet to see the marketplace.",
-    exampleHeading: "Example Marketplace Invoice",
-    exampleDisclaimer: "EXAMPLE ONLY. NOT A LIVE OFFERING.",
-    errorTitle: "Unable to load investable invoices",
-    errorDescription: "Unable to load investable invoices right now.",
-    errorStatus: "Unable to load investable invoices.",
-    searchPlaceholder: "Search by issuer name",
-    filterSoonLabel: "Soon: These filter controls are currently unavailable.",
-    filterLegend: "Marketplace Filters",
-    retryAction: "Try again",
-    noMatchFilter: "No invoices match your filters.",
-    listAriaLabel: "Investable invoices",
-    loadMore: "Load more",
-    loadMoreAriaLabel: "Load more invoices",
-    yieldDisclaimer:
-      "Note: Yield references are educational only and reflect on-chain basis-point assumptions. Invoice contracts settle at maturity.",
-    labelYield: "Est. yield\u00A0",
-    labelMaturity: "Maturity\u00A0",
-    announceNoInvoices: "No invoices available",
-    announceNoMatch: "No invoices match",
-    announceFilteredCount: "{matched} of {total} invoices match",
-    announceInvoicesLoaded: "{count} investable invoices loaded",
-    announceShowing: "Showing {shown} of {total} investable invoices",
-  },
-  invoices: {
-    title: "Invoices",
-    subtext: "Upload and tokenize invoices. List will be wired to the API and Stellar.",
-    emptyState: "No invoices yet. Connect wallet and upload your first invoice.",
-    errorTitle: "Unable to load invoices",
-    errorDescription: "There was a problem loading your invoices. Please try again later.",
-    backToHome: "\u2190 LiquiFact",
-    connectWallet: "Connect Wallet",
-  },
-  layout: {
-    backToHome: "\u2190 LiquiFact",
-    connectWallet: "Connect Wallet",
-  },
-  footer: {
-    docs: "Documentation",
-    docsUrl: "https://docs.liquifact.com",
-    status: "System Status",
-    statusUrl: "https://status.liquifact.com",
-    contact: "Contact Support",
-    contactUrl: "mailto:support@liquifact.com",
-    discord: "Discord Community",
-    discordUrl: "https://discord.gg/JrGPH4V3",
-  },
-  uploadZone: {
-    requirementsTitle: "Upload requirements",
-    badgePdfOnly: "PDF only",
-    badgeMaxSize: "Max {maxSizeMb} MB",
-    badgeOneFile: "One file per invoice",
-    requirementsBody:
-      "Only PDF documents are accepted. Files larger than {maxSizeMb} MB will be rejected. Ensure your invoice is complete and legible before uploading.",
-    dropZoneLabel: "Drop PDF invoice here or press Enter to browse files",
-    fileInputLabel: "Select PDF invoice file",
-    dragDropPrompt: "Drag & drop your invoice PDF here",
-    browsePrompt: "or click to browse",
-    changeFile: "Click to choose a different file",
-    submitIdle: "Upload & Tokenize Invoice",
-    submitUploading: "Uploading invoice...",
-    submitTokenizing: "Tokenizing invoice...",
-    statusUploading: "Uploading invoice...",
-    statusTokenizing: "Invoice uploaded. Pending tokenization...",
-    statusSuccess: "Invoice queued for tokenization. Blockchain confirmation pending.",
-    spinnerLabel: "Loading",
-    errorNoFile: "No file selected.",
-    errorInvalidType: 'Invalid file type "{type}". Only PDF files are accepted.',
-    errorOversize: "File is {sizeMb} MB \u2014 exceeds the {maxSizeMb} MB limit.",
-    errorEmpty: "File is empty (0 bytes). Please select a valid PDF file.",
-    errorInvalidPdf: "The selected file does not appear to be a valid PDF.",
-    errorReadFailed: "Unable to read file. Please try again.",
-    errorUploadFailed: "Upload failed. Please try again.",
-    errorUploadStatus: "Upload failed ({status})",
-  },
-  wallet: {
-    connectButton: "Connect Wallet",
-    connectingButton: "Connecting...",
-    disconnectButton: "Disconnect",
-    retryButton: "Retry Connection",
-    switchNetworkButton: "Switch Network",
-    installWalletButton: "Install Wallet",
-    helperDisconnected: "Connect your Stellar wallet to access the platform",
-    helperConnecting: "Please approve the connection in your wallet",
-    helperConnected: "Connected to Stellar {network}",
-    helperError: "Connection failed. Please try again.",
-    helperWrongNetwork: "Please switch to the Stellar public network",
-    helperNoWallet: "No Stellar wallet detected. Install one to continue",
-    installWalletUrl: "https://www.stellar.org/wallets",
-    toastConnectedTitle: "Wallet connected",
-    toastConnectedMsg: "Wallet connected successfully.",
-    toastErrorTitle: "Connection failed",
-    toastErrorMsg: "Failed to connect to wallet. Please try again.",
-    toastWrongNetworkTitle: "Wrong network",
-    toastWrongNetworkMsg: "Wallet is connected to testnet. Please switch to public network.",
-    errorConnect: "Failed to connect to wallet. Please try again.",
-    errorWrongNetwork: "Wallet is connected to testnet. Please switch to public network.",
-    announceConnected: "Wallet connected.",
-    announceDisconnected: "Wallet disconnected.",
-    announceError: "Wallet connection failed.",
-    announceWrongNetwork: "Wallet connected to wrong network.",
-    announceNoWallet: "No wallet detected.",
-  },
-  error: {
-    title: "Something went wrong",
-    description: "An unexpected error occurred. We\u2019ve been notified and are looking into it.",
-    actionLabel: "Try again",
-    previewLabel: "Error boundary",
-  },
-  notFound: {
-    heading: "Page not found",
-    description: "The page you\u2019re looking for doesn\u2019t exist or has been moved.",
-    homeLabel: "\u2190 Back to LiquiFact",
-    statusLabel: "404",
-  },
-  globalError: {
-    heading: "Critical error",
-    description: "A layout-level error occurred. Please reload the page or return home.",
-    reloadLabel: "Reload page",
-    homeLabel: "\u2190 Back to LiquiFact",
-  },
+  invest: {},
+  invoices: {},
+  layout: {},
+  footer: {},
+  uploadZone: {},
+  wallet: {},
+  nav: {},
+  error: {},
+  network: {},
+  notFound: {},
+  globalError: {},
+  invoiceTimeline: {},
+  setting: {},
 };
+
+export default copy;
+export { copy };

@@ -8,12 +8,22 @@ Shared UI components for the LiquiFact frontend. All components live under `comp
 
 - [EmptyState](#emptystate)
 - [ErrorBanner](#errorbanner)
+- [OfflineBanner](#offlinebanner)
 - [Footer](#footer)
+- [Form](#form)
+- [FundAmountInput](#fundamountinput)
 - [Hooks](#hooks)
+- [InvoiceCard](#invoicecard)
+- [InvoiceDetail](#invoicedetail)
+- [InvoiceDetailSkeleton](#invoicedetailskeleton)
+- [InvoiceFilters](#invoicefilters)
 - [InvoiceList](#invoicelist)
 - [InvoiceListSkeleton](#invoicelistskeleton)
 - [InvoiceSearch](#invoicesearch)
+- [InvoiceTimeline](#invoicetimeline)
 - [NavMenu](#navmenu)
+- [Pagination](#pagination)
+- [StatusLegendFilter](#statuslegendfilter)
 - [StatusPill](#statuspill)
 - [ThemeToggle](#themetoggle)
 - [ToastProvider / useToast](#toastprovider--usetoast)
@@ -138,6 +148,38 @@ Displays a structured error message with a variant label, title, description, op
 
 ---
 
+## OfflineBanner
+
+A persistent banner displayed when the browser loses network connectivity. When the connection is restored, a transient success notification is shown via the toast system.
+
+**File:** `components/OfflineBanner.jsx`
+
+### Behaviour
+
+- **Offline:** renders a fixed-position amber banner at the top of the viewport reading "You are offline — some features may be unavailable."
+- **Reconnection:** when the browser transitions from offline to online, fires a `success` toast with the title "Back online" and message "Your network connection has been restored."
+- **Online (stable):** renders nothing — no banner, no toast.
+
+### Dependencies
+
+- `useNetworkStatus` — SSR-safe hook from `lib/hooks/useNetworkStatus.js`
+- `useToast` — from the `ToastProvider` context (must be rendered inside a `<ToastProvider>`)
+
+### Accessibility
+
+- The offline banner uses `role="alert"` and `aria-live="assertive"` so screen readers announce the offline state immediately when it appears.
+- The reconnection toast uses the existing toast system, which announces via `aria-live="polite"`.
+- A warning triangle icon is present as a visual cue but marked `aria-hidden="true"` — the text alone conveys the meaning (WCAG 2.1 §1.4.1).
+
+### Example
+
+```jsx
+// Mounted in app/layout.js inside ToastProvider
+<OfflineBanner />
+```
+
+---
+
 ## Footer
 
 Site footer with navigation links (Docs, System Status, Contact Support). Links are sourced from the `app/copy/en.js` copy file.
@@ -162,6 +204,127 @@ Site footer with navigation links (Docs, System Status, Contact Support). Links 
   links={[{ label: 'Home', href: '/', external: false }]}
 />
 ```
+
+---
+
+## InvoiceCard
+
+Marketplace invoice card for the Invest list. The entire card is a single navigational `Link` to `/invest/[id]`. Status is rendered through the shared `StatusPill` so label, tone, and a11y metadata stay aligned with the detail page.
+
+**File:** `components/InvoiceCard.jsx`
+
+### Props
+
+| Prop      | Type      | Default | Description                                      |
+| --------- | --------- | ------- | ------------------------------------------------ |
+| `invoice` | `Invoice` | —       | Invoice object (`id`, `issuer`, amount fields, `status`, …) |
+
+### Accessibility
+
+- The card root is one focusable `Link` with a composed `aria-label` of the form `Invoice {id} from {issuer}` plus an optional status segment when the canonical pill resolves.
+- Nested `StatusPill` exposes `role="status"` and `aria-label="Status: …"` (text + tone; not colour-only).
+- Focus indicator: `focus-visible:ring-2` cyan outline (see Known Limitations in `docs/accessibility.md` for `.focus-ring` alignment).
+
+### Design tokens
+
+- Card spacing and typography now follow the shared marketplace-card tokens defined in `app/globals.css` (`--market-card-padding`, `--market-card-gap`, and the title/meta typography tokens).
+- These values keep the marketplace card layout consistent across the shared `InvoiceCard` component and the `/invest` list experience.
+
+> **Note:** `/invest` currently renders inline list rows rather than mounting `InvoiceCard`. Prefer this component when consolidating list markup so a11y and layout stay in sync with `InvoiceListSkeleton`.
+
+### Example
+
+```jsx
+import InvoiceCard from "@/components/InvoiceCard";
+
+<li>
+  <InvoiceCard invoice={invoice} />
+</li>
+```
+
+---
+
+## InvoiceDetail
+
+A presentational component that renders the full details of an invoice. It manages its own loading/error state via an injectable `loadInvoice` prop.
+
+**File:** `components/InvoiceDetail.jsx`
+
+### Props
+
+| Prop          | Type                                            | Required | Description                                                         |
+| ------------- | ----------------------------------------------- | -------- | ------------------------------------------------------------------- |
+| `id`          | `string`                                        | Yes      | The unique invoice identifier.                                      |
+| `loadInvoice` | `(id: string) => Promise<Invoice>`              | Yes      | An async function that resolves to an invoice object or throws.     |
+
+### Named exports
+
+| Export                     | Description                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------------- |
+| `default` (`InvoiceDetail`) | The main detail component                                                           |
+
+### Example
+
+```jsx
+import InvoiceDetail from "@/components/InvoiceDetail";
+
+async function fetchInvoice(id) {
+  const res = await fetch(`/api/invoices/${id}`);
+  if (!res.ok) throw new Error("Not found");
+  return res.json();
+}
+
+<InvoiceDetail
+  id="12345"
+  loadInvoice={fetchInvoice}
+/>
+```
+
+---
+
+## InvoiceDetailSkeleton
+
+A presentational skeleton component used as a loading state while fetching invoice details. Its dimensions and structure mirror the actual detail layout to prevent layout shift.
+
+**File:** `components/InvoiceDetailSkeleton.jsx`
+
+### Named exports
+
+| Export                           | Description                               |
+| -------------------------------- | ----------------------------------------- |
+| `default` (`InvoiceDetailSkeleton`) | The main skeleton component               |
+
+---
+
+## InvoiceFilters
+
+Advanced marketplace filters: yield range, currency chips, maturity dates, sort, and clear. Also exports `StatusLegendFilter`, `ActiveFilterSummary`, filter helpers, and `DEFAULT_FILTERS`.
+
+**File:** `components/InvoiceFilters.jsx`
+
+### Named exports (a11y-relevant)
+
+| Export               | Description                                                                 |
+| -------------------- | --------------------------------------------------------------------------- |
+| `default`            | Full filter toolbar (currency roving tabindex, yield/maturity/sort fields) |
+| `StatusLegendFilter` | Status chip row — see [StatusLegendFilter](#statuslegendfilter)              |
+| `ActiveFilterSummary`| Results count + removable active-filter chips                               |
+
+### Accessibility (`InvoiceFilters` default)
+
+- Currency chips: `role="toolbar"` · `aria-label="Currency filter"` · roving `tabindex` · `aria-pressed` — full keyboard contract in [`docs/accessibility.md`](docs/accessibility.md#roving-tabindex-for-filter-chips-issue-466).
+- Yield and maturity groups use `<fieldset>` + `sr-only` legends; inputs carry descriptive `aria-label`s.
+- Sort `<select>` has `aria-label="Sort options"`; Clear has `aria-label="Clear all filters"`.
+- Date inputs currently use `focus:border-cyan-500` instead of `.focus-ring` (tracked in Known Limitations).
+
+### Accessibility (`ActiveFilterSummary`)
+
+- Removable chips live in `<ul aria-label="Active filters">`.
+- Each remove control is a `<button>` with `aria-label={`Remove ${chip.label}`}`.
+- Decorative `×` is `aria-hidden="true"`.
+- Clear-all (when shown) is a native button with a visible focus ring.
+
+> **Note:** On `/invest`, advanced filters are wrapped in a coming-soon `<fieldset aria-disabled="true">` (see marketplace contract). `ActiveFilterSummary` is implemented and tested but not currently mounted on the page.
 
 ---
 
@@ -286,9 +449,10 @@ The default placeholder includes a visible `(press /)` hint for discoverability.
 
 ### Accessibility
 
-- Labelled via a `sr-only` `<label>` linked to the input with `htmlFor` / `id`.
+- Named via the optional `aria-label` prop on the text input (the marketplace page passes copy from `app/copy/en`).
 - The global shortcut does not trap or hijack keystrokes in editable fields.
 - Modifier combinations (`Ctrl+/`, `Meta+/`, `Alt+/`) are ignored to avoid conflicting with browser shortcuts.
+- Focus styling uses `focus:ring-2` (see Known Limitations in `docs/accessibility.md` for `.focus-ring` alignment).
 
 ### Example
 
@@ -302,6 +466,104 @@ function MarketplaceFilters() {
     <InvoiceSearch value={searchQuery} onChange={setSearchQuery} />
   );
 }
+```
+
+---
+
+## InvoiceTimeline
+
+Renders an accessible vertical lifecycle timeline for an invoice detail page. Visualises the five canonical stages every invoice passes through and marks the current stage based on the invoice's `status` field.
+
+**File:** `components/InvoiceTimeline.jsx`
+
+### Lifecycle stages
+
+Stages are rendered in this fixed order:
+
+| Order | Stage key  | Display label | Copy key                              |
+| ----- | ---------- | ------------- | ------------------------------------- |
+| 1     | `uploaded` | Uploaded      | `copy.invoiceTimeline.stageUploaded`  |
+| 2     | `verified` | Verified      | `copy.invoiceTimeline.stageVerified`  |
+| 3     | `listed`   | Listed        | `copy.invoiceTimeline.stageListed`    |
+| 4     | `funded`   | Funded        | `copy.invoiceTimeline.stageFunded`    |
+| 5     | `settled`  | Settled       | `copy.invoiceTimeline.stageSettled`   |
+
+### Status → current stage mapping
+
+The `status` prop (one of `INVOICE_STATUSES`) is mapped to the active stage key via `resolveCurrentStage`:
+
+| Invoice status | Current stage | Rationale                                      |
+| -------------- | ------------- | ---------------------------------------------- |
+| `"Open"`       | `listed`      | Invoice is listed and awaiting funding         |
+| `"Funded"`     | `funded`      | Invoice has been funded                        |
+| `"Settled"`    | `settled`     | Invoice has fully settled                      |
+| `"Overdue"`    | `listed`      | Listed but past maturity without being funded  |
+| _(unknown)_    | _(none)_      | All stages render as pending; no stage is current |
+
+### Visual state of each stage
+
+| Stage state | Dot colour     | Label colour     | Copy key                              |
+| ----------- | -------------- | ---------------- | ------------------------------------- |
+| Completed   | `bg-emerald-400` (mirrors `STATUS_PILL_MAP.Settled`) | `text-emerald-300` | `copy.invoiceTimeline.statusCompleted` |
+| Current     | `bg-cyan-400`  (mirrors `STATUS_PILL_MAP.Open`)      | `text-cyan-300 font-semibold` | `copy.invoiceTimeline.statusCurrent` |
+| Pending     | `bg-slate-700`                                       | `text-slate-500` | `copy.invoiceTimeline.statusPending`  |
+
+Tone classes are derived from `STATUS_PILL_MAP` in `lib/types/invoice.js` so timeline and pill colours are always in lock-step.
+
+### Props
+
+| Prop         | Type     | Default | Description                                                                                              |
+| ------------ | -------- | ------- | -------------------------------------------------------------------------------------------------------- |
+| `status`     | `string` | —       | Invoice status value (`"Open"`, `"Funded"`, `"Settled"`, `"Overdue"`). Unknown/missing → all pending.   |
+| `timestamps` | `object` | `{}`    | Optional map of stage keys to display strings (e.g. `{ uploaded: "2025-01-10" }`). Missing keys are silently skipped — no placeholder, no error. |
+| `className`  | `string` | `""`    | Additional Tailwind classes forwarded to the root `<section>`.                                           |
+
+### Named exports
+
+| Export                | Type       | Description                                                                               |
+| --------------------- | ---------- | ----------------------------------------------------------------------------------------- |
+| `default`             | Component  | The timeline component                                                                    |
+| `TIMELINE_STAGES`     | `object`   | Frozen enum of stage keys: `UPLOADED`, `VERIFIED`, `LISTED`, `FUNDED`, `SETTLED`         |
+| `STAGE_ORDER`         | `string[]` | Ordered array of stage keys used to render the timeline                                   |
+| `resolveCurrentStage` | `function` | `(status) => stageKey | null` — maps an invoice status to the active stage key           |
+
+### Accessibility
+
+- The component root is a `<section>` with `aria-labelledby` pointing to the `<h2>` heading inside it. Screen readers announce the section as _"Invoice lifecycle"_ (or the copy-equivalent).
+- Stages are rendered as an `<ol>` (ordered list) so the sequence is conveyed semantically. The list carries `aria-label` matching the heading text.
+- **`aria-current="step"`** is set on the currently active stage `<li>`. Only one stage bears this attribute at a time.
+- Each `<li>` carries an `aria-label` of the form `"<Stage name> — <Completed | Current | Pending>"` so state is conveyed in text, not by colour alone (WCAG 2.1 §1.4.1).
+- Decorative dot, connector, and SVG checkmark elements are `aria-hidden="true"` / `focusable="false"`.
+- Passes `jest-axe` checks for every lifecycle state (no status, Open, Funded, Settled, Overdue).
+
+### Graceful handling of missing timestamps
+
+- If `timestamps` is omitted or an empty object, no timestamp text is rendered — stages still display correctly.
+- If a specific stage key is absent from `timestamps`, that stage's timestamp is simply omitted; chronological order and status state are preserved.
+- `null`, `undefined`, and empty string values for a timestamp key are silently skipped; no placeholder text or error is shown.
+- Extra / unknown keys in `timestamps` are ignored without error.
+
+### Example
+
+```jsx
+import InvoiceTimeline from "@/components/InvoiceTimeline";
+
+// Basic usage — status only, no timestamps
+<InvoiceTimeline status={invoice.status} />
+
+// With optional timestamps
+<InvoiceTimeline
+  status="Funded"
+  timestamps={{
+    uploaded: "2025-01-10",
+    verified: "2025-01-12",
+    listed:   "2025-01-15",
+    funded:   "2025-02-04",
+  }}
+/>
+
+// On the invoice detail page (with spacing class)
+<InvoiceTimeline status={invoice.status} timestamps={invoice.timestamps} className="mb-6" />
 ```
 
 ---
@@ -408,49 +670,69 @@ Drag-and-drop (or click-to-browse) PDF invoice upload form. Validates the file c
 
 **File:** `components/UploadZone.jsx`
 
+> **Full API reference:** [docs/upload-api.md](docs/upload-api.md) — props table, named
+> exports, upload states, all validation rules, error messages, `ProgressBar` details,
+> `onUploadSuccess` payload shape, and complete usage examples.
+
 ### Props
 
-None — API endpoint is read from `NEXT_PUBLIC_API_URL` (falls back to `http://localhost:3001`).
+| Prop              | Type       | Required | Default     | Description |
+| ----------------- | ---------- | -------- | ----------- | ----------- |
+| `onUploadSuccess` | `function` | No       | `undefined` | Called after upload and server tokenization complete. Receives an optimistic invoice object. See [docs/upload-api.md#onuploadsuccess-payload](docs/upload-api.md#onuploadsuccess-payload). |
+| `progress`        | `number`   | No       | `undefined` | Upload progress `0–100`. When supplied, shows a determinate `ProgressBar`; omit for indeterminate spinner. |
 
-### Exported constants
+### Named exports
 
-| Export             | Description                                                     |
-| ------------------ | --------------------------------------------------------------- |
-| `MAX_UPLOAD_BYTES` | Numeric constant limiting file size to 10 MB (in bytes)         |
-| `FILE_CONSTRAINTS` | Object with `accept`, `mimeType`, `maxSizeMb`, `maxSizeBytes`   |
-| `Spinner`          | Small inline SVG spinner used internally; re-exported for reuse |
+| Export             | Description |
+| ------------------ | ----------- |
+| `default`          | The `UploadZone` component |
+| `FILE_CONSTRAINTS` | Frozen object: `{ accept, mimeType, maxSizeMb, maxSizeBytes }` |
+| `Spinner`          | Small inline SVG spinner — re-exported for use in other components |
 
 ### Upload states
 
-| State        | Description                                             |
-| ------------ | ------------------------------------------------------- |
-| `idle`       | Waiting for a file or ready to submit                   |
-| `uploading`  | `fetch` in progress; submit button disabled             |
-| `tokenizing` | Upload succeeded; waiting for server tokenization delay |
-| `success`    | Invoice queued; informational status shown              |
+| State        | Description |
+| ------------ | ----------- |
+| `"idle"`     | Waiting for a file or ready to submit |
+| `"uploading"`| `fetch` in progress; submit button disabled; spinner or `ProgressBar` shown |
+| `"tokenizing"` | Upload succeeded; waiting for server tokenization delay |
+| `"success"`  | Invoice queued; success message and reset button shown |
 
 ### Validation rules
 
-- **Type:** only `application/pdf` accepted; any other MIME type is rejected.
-- **Size:** file must be ≤ 10 MB (`MAX_UPLOAD_BYTES`). Validation is checked immediately upon file selection via `FILE_CONSTRAINTS`, and additionally enforced before the network `fetch` is triggered to ensure safety.
+- **MIME type:** only `application/pdf` accepted.
+- **Size:** file must be ≤ 10 MB (`FILE_CONSTRAINTS.maxSizeBytes`).
+- **Non-empty:** 0-byte files are rejected.
+- **Magic bytes:** first 5 bytes must equal `%PDF-` (deep validation via `lib/validation/pdf.js`).
+- **Extension:** file name must end with `.pdf`.
 
 ### Accessibility
 
-- Drop zone renders as `role="button"` with `tabIndex={0}`; activates on `Enter` and `Space`.
-- Errors use `role="alert"` with `aria-live="assertive"`.
-- Progress messages use `role="status"` with `aria-live="polite"`.
-- Upload button carries `aria-disabled` in addition to the native `disabled` attribute.
+- Drop zone is `role="button"` / `tabIndex={0}`; activates on `Enter` and `Space`.
+- Errors use `role="alert"` / `aria-live="assertive"`.
+- Progress and status messages use `role="status"` / `aria-live="polite"`.
+- Submit button carries both `disabled` and `aria-disabled`.
+- Full a11y contract: [docs/upload-a11y.md](docs/upload-a11y.md).
 
 ### Example
 
 ```jsx
 import UploadZone from "@/components/UploadZone";
+import InvoiceList from "@/components/InvoiceList";
+import { useState } from "react";
 
 export default function InvoicePage() {
+  const [optimisticInvoices, setOptimisticInvoices] = useState([]);
+
   return (
     <main>
       <h1>Upload Invoice</h1>
-      <UploadZone />
+      <UploadZone
+        onUploadSuccess={(invoice) =>
+          setOptimisticInvoices((prev) => [invoice, ...prev])
+        }
+      />
+      <InvoiceList optimisticInvoices={optimisticInvoices} />
     </main>
   );
 }
@@ -578,6 +860,48 @@ import StatusPill from '@/components/StatusPill';
 // Neutral fallback (null, undefined, unknown strings, etc.)
 <StatusPill status={null} />             // → "Unknown" pill
 <StatusPill status="legacy-available" /> // → "Unknown" pill
+```
+
+---
+
+## Pagination
+
+Accessible “Load more” control for list views. Optionally announces page-based navigation when `page` / `totalPages` / `pageSize` are supplied.
+
+**File:** `components/Pagination.jsx`
+
+### Props
+
+| Prop         | Type       | Default | Description                                                                 |
+| ------------ | ---------- | ------- | --------------------------------------------------------------------------- |
+| `shown`      | `number`   | —       | Number of items currently visible                                           |
+| `total`      | `number`   | —       | Total items available                                                       |
+| `onLoadMore` | `function` | —       | Called when the user activates Load more                                    |
+| `page`       | `number`   | —       | Optional 1-based page; with `totalPages` enables page-mode announcer        |
+| `totalPages` | `number`   | —       | Optional total pages (page mode)                                            |
+| `pageSize`   | `number`   | —       | Optional items per page for “showing items A–B”                             |
+| `ref`        | `Ref`      | —       | Forwarded to the Load more button for focus restore after each load         |
+
+### Accessibility
+
+- **Load-more mode (default):** visible count text uses `aria-live="polite"`; the button has `aria-label="Load more invoices"` and receives the forwarded ref so callers can call `.focus()` after appending items.
+- **Page mode:** a hidden `role="status" aria-live="polite" aria-atomic="true"` region announces `Page X of Y, showing items A–B` only after the first real `page` change (initial mount is skipped).
+- Page-mode announcer is **omitted** in load-more mode so it does not compete with a page-owned list announcer (see [`docs/accessibility.md`](docs/accessibility.md#pagination-announcements-issue-276)).
+- Focus indicator: `focus-visible:ring-2` (Known Limitations notes `.focus-ring` drift).
+
+> **Note:** `/invest` currently uses an inline Load more button with the same focus-restore pattern; prefer this component when consolidating.
+
+### Example
+
+```jsx
+import Pagination from "@/components/Pagination";
+
+<Pagination
+  ref={loadMoreRef}
+  shown={visibleCount}
+  total={filtered.length}
+  onLoadMore={handleLoadMore}
+/>
 ```
 
 ---
@@ -739,9 +1063,159 @@ import ThemeToggle from '@/components/ThemeToggle';
 
 ---
 
+## FundAmountInput
+
+A partial-funding amount input with live validation, expected-yield preview, and accessible inline error messages. Replaces the all-or-nothing fund button on the invoice detail page.
+
+**File:** `components/FundAmountInput.jsx`
+
+### Named exports
+
+| Export                | Description                                                                 |
+| --------------------- | --------------------------------------------------------------------------- |
+| `default`             | The controlled input form component                                         |
+| `validateFundAmount`  | Pure validation function — use in tests or server-side validation           |
+| `deriveExpectedYield` | Pure calculation — derives the expected yield amount for a partial funding  |
+
+### Props
+
+| Prop        | Type       | Default     | Description                                                                             |
+| ----------- | ---------- | ----------- | --------------------------------------------------------------------------------------- |
+| `maxAmount` | `number`   | —           | **Required.** Maximum fundable balance (the invoice's `amountValue`).                   |
+| `currency`  | `string`   | —           | **Required.** Invoice currency code (e.g. `"USD"`, `"EUR"`). Controls decimal precision. |
+| `yieldValue`| `number`   | —           | **Required.** Invoice yield rate as a percentage number (e.g. `8.2` for 8.2%).         |
+| `onSubmit`  | `function` | `undefined` | Called with the validated numeric amount on submit. May be async.                       |
+| `disabled`  | `boolean`  | `false`     | Disables the input and submit button externally (e.g. wallet is connecting).            |
+
+### Validation rules
+
+All validation is performed by the exported `validateFundAmount(rawValue, maxAmount, currency)` function:
+
+| Rule                  | Error copy key                         | Detail                                                                 |
+| --------------------- | -------------------------------------- | ---------------------------------------------------------------------- |
+| Non-empty             | `invest.fundAmount.errorRequired`      | Empty or whitespace-only input                                         |
+| Numeric               | `invest.fundAmount.errorRequired`      | Non-numeric input                                                      |
+| Positive              | `invest.fundAmount.errorPositive`      | Zero or negative values                                                |
+| ≤ max balance         | `invest.fundAmount.errorExceedsBalance`| Amount exceeds the invoice `amountValue`                               |
+| Decimal precision     | `invest.fundAmount.errorPrecision`     | Exceeds allowed decimal places for the currency (2 for USD, 0 for JPY) |
+
+### Copy keys used
+
+All strings are sourced from `app/copy/en.js` under the `invest.fundAmount` namespace:
+
+| Key                    | Purpose                                         |
+| ---------------------- | ----------------------------------------------- |
+| `label`                | Input label                                     |
+| `placeholder`          | Input placeholder                               |
+| `helper`               | Helper text with `{max}` and `{currency}` tokens|
+| `expectedYieldLabel`   | Label prefix for the yield preview              |
+| `errorRequired`        | Validation error for empty / non-numeric input  |
+| `errorPositive`        | Validation error for zero or negative values    |
+| `errorExceedsBalance`  | Validation error with `{max}` and `{currency}`  |
+| `errorPrecision`       | Validation error with `{decimals}` and `{currency}` |
+| `submitLabel`          | Submit button label                             |
+| `submittingLabel`      | Submit button label while in flight             |
+
+### Accessibility
+
+- The `<input>` is linked to its helper text and error message via `aria-describedby`. The IDs are generated with `useId()` so they are unique even if the component appears more than once on a page.
+- `aria-invalid="true"` is set on the input when a validation error is visible (after the user has blurred the field or attempted to submit).
+- The error message is rendered with `role="alert"` and `aria-live="polite"` so screen readers announce it without requiring focus to move to the error.
+- The expected-yield preview region carries `aria-live="polite"` so screen readers announce live yield updates as the user types.
+- The submit `<Button>` is disabled (and `aria-busy` is set via the `Button` component's `loading` prop) while submission is in flight.
+
+### Example
+
+```jsx
+import FundAmountInput from "@/components/FundAmountInput";
+
+// On the invoice detail page for an Open invoice
+<FundAmountInput
+  maxAmount={invoice.amountValue}
+  currency={invoice.currency}
+  yieldValue={invoice.yieldValue}
+  onSubmit={async (amount) => {
+    await fundInvoiceOnChain(invoice.id, amount);
+  }}
+  disabled={walletState !== "connected"}
+/>
+```
+
+### Exported utility functions
+
+#### `validateFundAmount(rawValue, maxAmount, currency)`
+
+Returns a localized error string on failure, or `null` when the value is valid.
+
+```js
+import { validateFundAmount } from "@/components/FundAmountInput";
+
+validateFundAmount("", 10000, "USD");       // "Please enter an amount."
+validateFundAmount("0", 10000, "USD");      // "Amount must be greater than zero."
+validateFundAmount("99999", 10000, "USD"); // "Amount cannot exceed …"
+validateFundAmount("100.999", 10000, "USD"); // "Amount must not exceed 2 decimal places …"
+validateFundAmount("500", 10000, "USD");   // null (valid)
+```
+
+#### `deriveExpectedYield(enteredAmount, totalAmount, yieldValue)`
+
+Returns the expected yield as a numeric amount.
+
+```js
+import { deriveExpectedYield } from "@/components/FundAmountInput";
+
+deriveExpectedYield(5000, 10000, 8.2); // 410  (5000 × 8.2% = $410 yield)
+deriveExpectedYield(10000, 10000, 8.2); // 820 (full amount)
+```
+
+---
+
 ## Hooks
 
 Reusable React hooks that live under `lib/hooks/`. Hooks are the canonical home for shared persistence and behaviour so any feature can adopt the same contract without re-implementing edge cases (SSR safety, quota errors, type preservation).
+
+### `useNetworkStatus`
+
+SSR-safe hook that tracks the browser's online/offline status by subscribing to the `online` and `offline` events on `window`.
+
+**File:** `lib/hooks/useNetworkStatus.js`
+
+#### Signature
+
+```js
+const isOnline = useNetworkStatus();
+```
+
+| Returns    | Type      | Description                                        |
+| ---------- | --------- | -------------------------------------------------- |
+| `isOnline` | `boolean` | `true` when the browser reports a network connection, `false` when offline. Always `true` during SSR. |
+
+#### SSR-safety contract
+
+- **Initial render always returns `true`** — the hook never reads `navigator.onLine` during render. This keeps React hydration deterministic in a Next.js app router context.
+- The actual `navigator.onLine` read happens inside `useEffect` after mount on the client.
+- Event listeners are registered after mount and cleaned up on unmount — no stale handlers leak across navigations or hot-reloads.
+
+#### Behaviour
+
+- Listens to `window` `online` and `offline` events. When the browser fires `offline`, the hook sets `isOnline` to `false`; when `online` fires, it sets `isOnline` to `true`.
+- Does NOT subscribe to `focus` or `visibilitychange` — only the standard `online`/`offline` API events are used, eliminating false re-connection announcements on tab switches.
+- Callers that need to detect the transition (e.g. show a reconnected toast) should track the previous value via `useRef`.
+
+#### Example
+
+```jsx
+'use client';
+
+import { useNetworkStatus } from '@/lib/hooks/useNetworkStatus';
+
+function MyComponent() {
+  const isOnline = useNetworkStatus();
+  return <span>{isOnline ? 'Online' : 'Offline'}</span>;
+}
+```
+
+---
 
 ### `useLocalStorage`
 
