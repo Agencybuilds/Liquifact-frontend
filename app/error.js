@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useTransition, useRef } from "react";
 import ErrorBanner from "../components/ErrorBanner";
 import { reportError } from "../lib/observability/reportError";
 import { copy } from "./copy/en";
@@ -24,12 +24,31 @@ import { copy } from "./copy/en";
  *   reload. Use it to give users a non-destructive recovery path.
  */
 export default function GlobalError({ error, reset }) {
+  const [isPending, startTransition] = useTransition();
+  const lastReportedError = useRef(null);
+  const isResetting = useRef(false);
+
   useEffect(() => {
+    // Deduplicate: avoid re-reporting if the same error object is caught again
+    if (lastReportedError.current === error) return;
+    lastReportedError.current = error;
+    
+    // Clear the reset lock when a new error instance is passed in
+    isResetting.current = false;
+
     // Forward to the configurable observability sink.
     // `error.digest` is the server-side identifier so production logs can
     // be correlated without exposing raw stack traces to the client.
     reportError(error, { digest: error?.digest });
   }, [error]);
+
+  const handleReset = () => {
+    if (isPending || isResetting.current) return;
+    isResetting.current = true;
+    startTransition(() => {
+      reset();
+    });
+  };
 
   return (
     <div
@@ -48,7 +67,7 @@ export default function GlobalError({ error, reset }) {
           description={copy.error.description}
           actionLabel={copy.error.actionLabel}
           previewLabel={copy.error.previewLabel}
-          onAction={reset}
+          onAction={handleReset}
         />
       </main>
     </div>
