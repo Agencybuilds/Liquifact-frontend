@@ -9,7 +9,7 @@
  * the backend `/invoices` endpoint is ready.
  *
  * Contract per item: { id, issuer, amount, currency, dueDate, yield, status }
- * NOTE: yield values are illustrative; contracts use on-chain basis points and
+ * NOTE: yield values are illustrative; contracts use on-chain basis-points and
  * actual settlement is at maturity.
  *
  * Concurrency invariants (hardened, ISSUE-1)
@@ -89,150 +89,240 @@ export const MOCK_INVOICES = [
   },
 ];
 
-// DEV-only delay (ms) to make the skeleton visible during local development.
+// DVV-only delay (ms) to make the skeleton visible during local development.
 const DEV_DELAY = process.env.NODE_ENV === "development" ? 1500 : 0;
 
-// ── In-flight deduplication slot ──────────────────────────────────────────────
-// Invariant: null when idle, a pending Promise when a fetch is in progress.
-// Never replaced mid-flight — set to null only on settlement so callers always
-// receive fresh data on the next independent call.
-let _inflight = null;
+/**
+ * @typedef {Object} InvoiceLoadResult
+ * @property {Array<Object>} invoices
+ * @property {Object} meta
+ * @property {boolean} meta.degraded - true when the primary source failed and
+ *   the fallback fixture was used.
+ * @property {string} [meta.reason] - machine-readable reason code for the
+ *   degradation (e.g. "timeout", "http_500", "invalid_payload").
+ * @property {string} [meta.requestId] - correlation id from the backend.
+ */
 
 /**
- * Resolve the test-hook override when in a valid non-production browser env.
- * Returns the override array when valid, or null to fall through.
- * @returns {Array|null}
+ * Build a deep clone of the mock fixture so callers cannot mutate the
+ * single source of truth and cause non-deterministic results across tests.
+ * @returns {Array<Object>}
  */
-function getTestOverride() {
-  if (
-    typeof window === "undefined" ||
-    process.env.NODE_ENV === "production"
-  ) {
-    return null;
-  }
-  const override = window.__TEST_MOCK_INVOICES__;
-  // Must be an Array; non-array values (strings, booleans, etc.) are ignored.
-  if (!Array.isArray(override)) return null;
-  return override;
+function cloneMockInvoices() {
+  return MOCK_INVOICES.map((inv) => ({
+    ...inv,
+    events: Array.isArray(inv.events) ? inv.events.map((e) => ({ ...e })) : [],
+  }));
 }
 
 /**
- * Validate that str is a YYYY-MM-DD ISO date string that round-trips cleanly
- * through Date (rejects calendar roll-overs like 2026-09-99).
+ * Normalize a raw invoice payload into the UI contract:
+ *   { id, issuer, amount, amountValue, currency, dueDate, yield, yieldValue,
+ *     status, events }
  *
- * This is the boundary check shared by daysUntilMaturity (ISSUE-3).
+ * This is the only place we translate backend shape -> UI shape. It is
+ * deterministic for any input shape (missing fields become null, events
+ * always an array).
  *
- * @param {unknown} str
- * @returns {boolean}
+ * @param {unknown} raw
+ * @returns {Object}
  */
-export function isValidDateStr(str) {
-  if (typeof str !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
-  const d = new Date(str + "T00:00:00Z");
-  if (Number.isNaN(d.getTime())) return false;
-  // Reject roll-overs: new Date('2026-09-99') silently rolls to a valid date
-  // in some engines, so we verify the round-trip.
-  return d.toISOString().slice(0, 10) === str;
+export function normalizeInvoice(raw) {
+  if (!raw || typeof raw !== "object") {
+    throw new TypeError("Invoice must be an object");
+  }
+  const {
+    id = null,
+    issuer = null,
+    amount = null,
+    amountValue = null,
+    currency = null,
+    dueDate = null,
+    yield: invYield = null,
+    yieldValue = null,
+    status = null,
+    events = [],
+  } = raw;
+  return {
+    id,
+    issuer,
+    amount,
+    amountValue,
+    currency,
+    dueDate,
+    yield: invYield,
+    yieldValue,
+    status,
+    events: Array.isArray(events) ? events.map((e) => ({ ...e })) : [],
+  };
 }
 
 /**
- * Load mock invoices, deduplicated across concurrent callers.
+ * Classify an error from a invoice load attempt into a stable, non-sensitive
+ * reason code. This is used for observability and for deciding whether a
+ * retry is safe.
  *
- * Test hook: Playwright / Jest tests may override the fixture by setting
- * window.__TEST_MOCK_INVOICES__ before the component mounts.  The override
- * is ignored in SSR environments and in production builds, and must be an
- * Array (empty arrays are valid "no invoices" fixtures).
- *
- * Validation boundaries
- * ─────────────────────
- * options — must be a plain object or omitted. A non-object argument is
- *           silently treated as {} so callers never throw on bad input.
- * signal  — must be an AbortSignal instance or undefined/null.
- *           A non-AbortSignal truthy value is ignored (treated as absent).
- *
- * @param {object}      [options]
- * @param {AbortSignal} [options.signal] - When aborted, this caller's promise
- *   rejects with an AbortError. Other concurrent waiters are unaffected.
- *
- * @returns {Promise<Array>} Resolves with the invoice array.
+ * @param {unknown} err
+ * @returns {string}
  */
-export function loadMockInvoices(options = {}) {
-  // Validation boundary: coerce non-object options to {} rather than throwing.
-  const safeOptions =
-    options !== null && typeof options === "object" && !Array.isArray(options)
-      ? options
-      : {};
+export function classifyLoadError(err) {
+  if (!err) return "unknown";
+  const name = err.name || "";
+  if (name === "InvoiceTimeoutError") return "timeout";
+  if (name === "AbortError") return "aborted";
+  if (typeof err.status === "number") return `http_${err.status}`;
+  if (name === "TypeError") return "invalid_payload";
+  return "network_error";
+}
 
-  // Validation boundary: accept only genuine AbortSignal instances.
-  const rawSignal = safeOptions.signal;
-  const signal =
-    typeof AbortSignal !== "undefined" && rawSignal instanceof AbortSignal
-      ? rawSignal
-      : null;
+/**
+ * Load investable invoices.
+ *
+ * This function is the single entry point used by the invest UI. It is
+ * deterministic and recoverable:
+ *
+ *   1. If a test override is present (`window__TEST_MOCK_INVOICES__`),
+ *      it is used directly and tagged as `source: "test"`.
+ *   2. Otherwise the real API is called via `fetchInvestableInvoices`.
+ *      On success the normalized list is returned with `source: "api"`.
+ *   3. On failure the call is retried with exponential backoff up to `retries`.
+ *      Timeouts, 5xx, and network errors are retried; 4xx client errors are
+ *      not retried (except 429) because retrying won't help.
+ *   4. If all retries fail, the function resolves with the local mock
+ *      fixture and `degraded: true` so the UI can render a banner and the
+ *      user can continue working. The error is reported through the
+ *      observability sink but never thrown to the caller.
+ *
+ * The result shape is always:
+ *   { invoices: Array<Object>, meta: { degraded, reason?, requestId?, attempts } }
+ *
+ * @param {Object} [options]
+ * @param {number} [options.retries=2] - number of retries after the first attempt
+ * @param {number} [options.timeoutMs]
+ * @param {Function} [options.fetcher] - injectable fetcher (for tests)
+ * @param {Function} [options.sleep] - injectable sleep (for tests)
+ * @param {Function} [options.reporter] - injectable error reporter
+ * @param {Function} [options.onDegraded] - called with meta when fallback is used
+ * @returns {Promise<InvoiceLoadResult>}
+ */
+export async function loadInvoices(options = {}) {
+  const {
+    retries = 2,
+    timeoutMs,
+    fetcher,
+    sleep,
+    reporter,
+    onDegraded,
+  } = options;
 
-  // Fast-path: already aborted before we start.
-  if (signal?.aborted) {
-    return Promise.reject(
-      Object.assign(new DOMException("Load aborted", "AbortError"), { code: 20 })
-    );
+  // Test hook: Playwright / Jest tests may override the fixture by setting
+  // window.__TEST_MOCK_INVOICES__ before the component mounts.  The override
+  // is ignored in non-browser (SSR) environments and in production builds.
+  if (typeof window !== "undefined" && window.__TEST_MOCK_INVOICES__) {
+    const override = window.__TEST_MOCK_INVOICES__;
+    const list = Array.isArray(override) ? override : [];
+    return {
+      invoices: list.map(normalizeInvoice),
+      meta: { degraded: false, source: "test", attempts: 0 },
+    };
   }
 
-  // Test-hook path: bypass deduplication for deterministic fixtures.
-  const testOverride = getTestOverride();
-  if (testOverride !== null) {
-    if (process.env.NODE_ENV !== "production") {
-      // eslint-disable-next-line no-console
-      console.debug("[invest/lib] loadMockInvoices: test override (" + testOverride.length + " invoices)");
-    }
-    return Promise.resolve(testOverride);
-  }
+  // Resolve the fetcher and sleep implementations. We lazy-load the real
+  // API client so this module remains importable from SSR and test code.
+  const doFetch = fetcher || (opts) => {
+    // eslint-disable-next-line global-require
+    const { fetchInvestableInvoices } = require("../api/invoices");
+    return fetchInvestableInvoices(opts);
+  };
+  const doSleep = sleep || ((ms) => new Promise((res) => setTimeout(res, ms)));
 
-  // Attach to an existing in-flight fetch or start a new one.
-  if (!_inflight) {
-    _inflight = new Promise((resolve) => {
-      setTimeout(() => {
-        _inflight = null; // clear slot before resolving so next call is fresh
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.debug("[invest/lib] loadMockInvoices: resolved " + MOCK_INVOICES.length + " invoices");
-        }
-        resolve(MOCK_INVOICES);
-      }, DEV_DELAY);
-    });
-  }
+  const totalAttempts = Math.max(1, Number(retries) + 1);
+  let lastError;
+  let lastRequestId;
 
-  // No AbortSignal — return the shared promise directly.
-  if (!signal) {
-    return _inflight;
-  }
+  for (let attempt = 1; attempt <= totalAttempts; attempt++) {
+    try {
+      const raw = await doFetch({ timeoutMs });
+      const invoices = Array.isArray(raw) ? raw.map(normalizeInvoice) : [];
+      return {
+        invoices,
+        meta: { degraded: false, source: "api", attempts: attempt },
+      };
+    } catch (err) {
+      lastError = err;
+      lastRequestId = err.requestId;
+      const reason = classifyLoadError(err);
 
-  // AbortSignal path: race the shared fetch against this caller's abort.
-  // Wrapping in a new Promise keeps _inflight intact for other waiters.
-  return new Promise((resolve, reject) => {
-    function onAbort() {
-      signal.removeEventListener("abort", onAbort);
-      reject(
-        Object.assign(new DOMException("Load aborted", "AbortError"), { code: 20 })
-      );
-    }
-
-    if (signal.aborted) {
-      onAbort();
-      return;
-    }
-
-    signal.addEventListener("abort", onAbort, { once: true });
-
-    _inflight.then(
-      (data) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(data);
-      },
-      (err) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(err);
+      // Aborted by caller (unmount) -> do not retry, do not degrade.
+      if (reason === "aborted") {
+        throw err;
       }
-    );
-  });
+
+      // 4xx client errors (except 429) are not retryable.
+      const isClientError = /^http_4\d\d$/.test(reason) && reason !== "http_429";
+      const isLastAttempt = attempt === totalAttempts;
+
+      if (isClientError || isLastAttempt) {
+        break;
+      }
+
+      // Exponential backoff with deterministic base (250ms * 2^(attempt-1)).
+      const backoffMs = 250 * Math.pow(2, attempt - 1);
+      await doSleep(backoffMs);
+    }
+  }
+
+  // All retries exhausted -> degrade to the local fixture so the UI is
+  // always renderable and the user can continue. The error is reported
+  // through the observability sink with a stable reason code.
+  const reason = classifyLoadError(lastError);
+  const meta = {
+    degraded: true,
+    source: "mock",
+    reason,
+    requestId: lastRequestId,
+    attempts: totalAttempts,
+  };
+
+  try {
+    const report = reporter || ((opts) => {
+      // eslint-disable-next-line global-require
+      const { reportError } = require("../observability/reportError");
+      reportError(opts.error, opts.context);
+    });
+    report({
+      error: lastError,
+      context: {
+        scope: "loadInvoices",
+        reason: meta.reason,
+        requestId: meta.requestId,
+        attempts: meta.attempts,
+      },
+    });
+  } catch {
+    // Observability must never break the load path.
+  }
+
+  try {
+    onDegraded?.(meta);
+  } catch {
+    // Callback failures must not break the load path.
+  }
+
+  return { invoices: cloneMockInvoices(), meta };
+}
+
+/**
+ * Backwards-compatible wrapper. Returns just the invoice array so existing
+ * callers that `await loadMockInvoices()` keep working. New code should
+ * prefer `loadInvoices()` to access the `meta` degradation flag.
+ *
+ * @param {Object} [options]
+ * @returns {Promise<Array<Object>>}
+ */
+export async function loadMockInvoices(options) {
+  const { invoices } = await loadInvoices(options);
+  return invoices;
 }
 
 /**

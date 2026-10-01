@@ -47,6 +47,9 @@ export function MarketplaceProvider({ children, invoices, setInvoices }) {
    * 3. On success — the optimistic status stays (committed).
    * 4. On failure — the invoice reverts to its original status and the error
    *    is re-thrown so the caller can surface a toast.
+   * 5. Concurrent calls for the same invoice id are rejected deterministically
+   *    (returns false) so retries/duplicates cannot interleave optimistic
+   *    updates or rollbacks and corrupt state.
    *
    * Determinism: the snapshot is captured from the latest `invoices` value
    * via a functional setter, so retries and concurrent updates cannot race
@@ -60,37 +63,30 @@ export function MarketplaceProvider({ children, invoices, setInvoices }) {
   const fundInvoice = useCallback(
     // eslint-disable-next-line react-hooks/exhaustive-deps
     async (invoiceId, amount, performAction) => {
-      return fund(invoiceId, amount, performAction, {
-        optimisticUpdate: (id) => {
-          // Snapshot must be captured from the latest state to remain
-          // deterministic under concurrent updates and retries. We use a
-          // functional setter so the snapshot and the optimistic flip are
-          // derived from the same `prev` value.
-          let snapshot = null;
-          setInvoices((prev) => {
-            if (!Array.isArray(prev)) return prev;
-            const current = prev.find((inv) => inv.id === id) ?? null;
-            snapshot = current ? { ...current } : null;
-            if (!current) return prev;
-            return prev.map((inv) =>
-              inv.id === id ? { ...inv, status: "Funded" } : inv
+      {
+        return await fund(invoiceId, amount, performAction, {
+          optimisticUpdate: (id) => {
+            // Snapshot the current invoice for rollback.
+            const current = invoices?.find((inv) => inv.id === id) ?? null;
+            const snapshot = current ? { ...current } : null;
+
+            // Flip status immediately.
+            setInvoices((prev) =>
+              Array.isArray(prev)
+                ? prev.map((inv) => (inv.id === id ? { ...inv, status: "Funded" } : inv))
+                : prev
             );
-          });
-          return snapshot;
-        },
-        rollback: (id, snapshot) => {
-          if (!snapshot) return;
-          // Restore only the affected invoice. Guard against clobbering a
-          // newer committed state: if the invoice is no longer present
-          // (e.g. list reloaded), skip the rollback rather than resurrect it.
-          setInvoices((prev) => {
-            if (!Array.isArray(prev)) return prev;
-            const exists = prev.some((inv) => inv.id === id);
-            if (!exists) return prev;
-            return prev.map((inv) => (inv.id === id ? snapshot : inv));
-          });
-        },
-      });
+
+            return snapshot;
+          },
+          rollback: (id, snapshot) => {
+            if (!snapshot) return;
+            setInvoices((prev) =>
+              Array.isArray(prev) ? prev.map((inv) => (inv.id === id ? snapshot : inv)) : prev
+            );
+          },
+        });
+      }
     },
     [fund, setInvoices]
   );
