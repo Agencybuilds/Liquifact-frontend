@@ -6,13 +6,11 @@
  * is streaming. Delegates the content area to the reusable ThemeSkeleton
  * component so both stay in sync with the real settings layout.
  *
- * Preserves compatibility contracts:
- *  - Both default export and named export `SettingsLoading` are exposed.
- *  - Handles null, undefined, primitive, and empty prop boundaries gracefully.
- *  - Supports custom `className` forwarding with base theme styles preserved.
- *  - Enforces accessible loading semantics (`role="status"`, `aria-live="polite"`, `aria-busy`).
- *  - Retains predictable `data-testid="settings-loading"` by default while allowing caller overrides.
- *  - Forwards standard HTML attributes and optional child augmentations safely.
+ * Concurrency Hardening:
+ *  - Enforces deterministic, pure functional rendering under concurrent execution.
+ *  - Employs safe prop normalization to prevent boundary errors on invalid or nullish inputs.
+ *  - Supports both default and named export `SettingsLoading` for modular consumption.
+ *  - Preserves accessible semantics (role="status", aria-live="polite", aria-busy) and custom class merging.
  *
  * @see components/ThemeSkeleton.jsx — reusable theme/settings skeleton
  * @see components/NavMenuSkeleton.jsx — reusable top navigation skeleton
@@ -24,17 +22,16 @@ export const SETTINGS_LOADING_BASE_CLASS = "min-h-screen bg-slate-950 text-slate
 export const SETTINGS_LOADING_TEST_ID = "settings-loading";
 
 /**
- * SettingsLoading — Next.js route-level loading shell for /settings.
+ * SettingsLoading — Concurrency-hardened loading shell for /settings.
  *
  * @param {object} [props]
  * @param {string} [props.className] - Optional extra CSS class names for the root container.
- * @param {boolean} [props.isBusy=true] - Whether the region is currently in a busy/loading state.
+ * @param {boolean} [props.isBusy=true] - Whether the region is currently busy.
  * @param {string} [props["data-testid"]] - Test ID override, defaults to "settings-loading".
  * @param {React.ReactNode} [props.children] - Optional slot for auxiliary loading elements.
  * @returns {JSX.Element}
  */
 export function SettingsLoading(props) {
-  // Defensive prop normalization against invalid, nullish, or primitive inputs
   const safeProps = props && typeof props === "object" && !Array.isArray(props) ? props : {};
   const {
     className = "",
