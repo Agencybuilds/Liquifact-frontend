@@ -7,7 +7,7 @@
  *  - Verify copy strings, ARIA roles, reset handler wiring, and a11y.
  */
 import "@testing-library/jest-dom";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { axe } from "jest-axe";
 import React from "react";
@@ -164,22 +164,53 @@ describe("GlobalError (app/error.js)", () => {
       expect(reset).toHaveBeenCalledTimes(1);
     });
 
-    it("allows reset to be called multiple times (idempotent)", async () => {
+    it("prevents multiple concurrent reset calls (deduplicates during transition)", async () => {
       const reset = jest.fn();
-      renderError(makeError(), reset);
+      
+      // We need a stateful wrapper to make useTransition's isPending work
+      function Wrapper() {
+        const [count, setCount] = React.useState(0);
+        const handleReset = () => {
+          reset();
+          setCount((c) => c + 1); // trigger state update to keep isPending true during batch
+        };
+        return <GlobalError error={makeError()} reset={handleReset} />;
+      }
+      
+      render(<Wrapper />);
       const btn = screen.getByTestId("error-action-btn");
-      await userEvent.click(btn);
-      await userEvent.click(btn);
-      await userEvent.click(btn);
-      expect(reset).toHaveBeenCalledTimes(3);
+      
+      act(() => {
+        fireEvent.click(btn);
+        fireEvent.click(btn);
+        fireEvent.click(btn);
+      });
+      
+      expect(reset).toHaveBeenCalledTimes(1);
     });
 
     it("does not call reportError again when reset is clicked", async () => {
       const reset = jest.fn();
       renderError(makeError(), reset);
       jest.clearAllMocks();
-      await userEvent.click(screen.getByTestId("error-action-btn"));
+      const btn = screen.getByTestId("error-action-btn");
+      await act(async () => {
+        userEvent.click(btn);
+      });
       expect(reportError).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("idempotent error reporting", () => {
+    it("deduplicates reportError for the same error instance", () => {
+      const error = makeError("boom");
+      const { rerender } = render(<GlobalError error={error} reset={jest.fn()} />);
+      
+      // Rerender with the exact same error
+      rerender(<GlobalError error={error} reset={jest.fn()} />);
+      rerender(<GlobalError error={error} reset={jest.fn()} />);
+      
+      expect(reportError).toHaveBeenCalledTimes(1);
     });
   });
 

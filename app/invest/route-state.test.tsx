@@ -119,7 +119,29 @@ describe("marketplace route state", () => {
 
     resolveLoad?.(mockInvoices);
     await waitFor(() => expect(loadInvoices).toHaveBeenCalledTimes(1));
-    expect(screen.getByText("Bright Logistics GmbH")).toBeInTheDocument();
+    expect(screen.getByText("Bright Logistics GmbH")).toBeInDocument();
+  });
+
+  it("recovers deterministically from a failed load without losing filter state", async () => {
+    const loadInvoices = jest
+      .fn()
+      .mockRejectedOnce(new Error("Network failure"))
+      .mockResolvedOnce(mockInvoices);
+
+    render(<InvestMarketplace loadInvoices={loadInvoices} />);
+
+    await waitFor(() => expect(screen.getByText(/network failure/i)).toBeInDocument());
+
+    const searchInput = screen.getByRole("textbox", { name: /search by issuer name/i });
+    fireEvent.change(searchInput, { target: { value: "Acme" } });
+    expect(searchInput).toHaveValue("Acme");
+
+    const retryButton = screen.getByRole("button", { name: /retry|reload/i });
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(loadInvoices).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByText("Acme Supplies Ltd")).toBeInDocument());
+    expect(screen.getByRole("textbox", { name: /search by issuer name/i })).toHaveValue("Acme");
   });
 
   it("surfaces a retryable error when loading invoices fails", async () => {
